@@ -1,0 +1,52 @@
+{
+  "name": "pi-herdr-shop",
+  "version": "0.1.0-alpha.1",
+  "description": "Visible file-ticket workstation for Pi and Herdr",
+  "type": "module",
+  "private": true,
+  "keywords": [
+    "pi-package",
+    "herdr-plugin"
+  ],
+  "pi": {
+    "extensions": [
+      "./extensions/index.ts"
+    ]
+  },
+  "files": [
+    "extensions",
+    "transport",
+    "core",
+    "bin",
+    "roles",
+    "docs/ARCHITECTURE.md",
+    "docs/MIGRATION.md",
+    "docs/MODELS.md",
+    "docs/WORKBENCH.md",
+    "docs/WORKFLOW.md",
+    "config",
+    "herdr-plugin.toml",
+    "README.md",
+    "THIRD_PARTY.md",
+    "LICENSE",
+    "LICENSE.pi-intercom"
+  ],
+  "scripts": {
+    "test": "PYTHONPATH=core python3 -m unittest discover -s tests -p 'test_*.py' && bun test tests",
+    "typecheck": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "^0.85.1",
+    "@earendil-works/pi-ai": "^0.85.1",
+    "@earendil-works/pi-tui": "^0.85.1",
+    "typebox": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/bun": "^1.2.0",
+    "typescript": "^5.8.0"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  }
+}

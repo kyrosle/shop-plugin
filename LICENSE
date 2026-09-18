@@ -1,0 +1,14 @@
+License decision pending — no license granted yet.
+
+This repository is the private Pi Shop workstation package (`pi-herdr-shop`,
+`private: true`). Publication, distribution or reuse outside the owner's machine
+is not authorized until the owner selects and records a project license.
+
+Third-party content is already licensed and attributed separately:
+
+* `pi-intercom` 0.13.0 (MIT) transport port — see `LICENSE.pi-intercom`,
+  `THIRD_PARTY.md` and `transport/NOTICE.md`;
+* Pi and Herdr remain the property of their respective authors.
+
+When a project license is chosen, replace this file with the full text and add
+the matching `license` field to `package.json`; do not publish before that.

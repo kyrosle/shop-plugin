@@ -1,0 +1,26 @@
+{
+  "id": "cli:pane:get",
+  "result": {
+    "pane": {
+      "agent": "pi",
+      "agent_status": "working",
+      "cwd": "/tmp/shop-demo/wt2",
+      "focused": false,
+      "foreground_cwd": "/tmp/shop-demo/wt2",
+      "label": "Worker 2 · DeepSeek",
+      "pane_id": "w5:p4",
+      "revision": 3,
+      "scroll": {
+        "max_offset_from_bottom": 140,
+        "offset_from_bottom": 0,
+        "viewport_rows": 25
+      },
+      "tab_id": "w5:t4",
+      "terminal_id": "term_sanitized4",
+      "terminal_title": "π - demo",
+      "terminal_title_stripped": "π - demo",
+      "workspace_id": "w5"
+    },
+    "type": "pane_info"
+  }
+}

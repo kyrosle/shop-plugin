@@ -1,0 +1,53 @@
+{
+  "binary_version": "herdr 0.9.0",
+  "capture_method": "no live capture: payloads are synthetic examples derived from the pinned schema shapes below, with synthetic pane/workspace ids and no real paths or titles.",
+  "event_shapes": {
+    "pane_agent_status_changed": {
+      "properties": [
+        "agent",
+        "agent_status",
+        "display_agent",
+        "pane_id",
+        "state_labels",
+        "title",
+        "type",
+        "workspace_id"
+      ],
+      "required": [
+        "type",
+        "pane_id",
+        "workspace_id",
+        "agent_status"
+      ]
+    },
+    "pane_closed": {
+      "properties": [
+        "pane_id",
+        "type",
+        "workspace_id"
+      ],
+      "required": [
+        "type",
+        "pane_id",
+        "workspace_id"
+      ]
+    },
+    "pane_exited": {
+      "properties": [
+        "pane_id",
+        "type",
+        "workspace_id"
+      ],
+      "required": [
+        "type",
+        "pane_id",
+        "workspace_id"
+      ]
+    }
+  },
+  "validation_scope": "Schema-derived fixtures validate event parsing, not real Herdr event delivery",
+  "protocol": 22,
+  "schema_sha256": "5fb46b13fdaf39c88cf699b9806685868c7ee6b0142523d84391b1606416dc0a",
+  "schema_version": 1,
+  "source": "derived from the pinned Herdr 0.9.0 protocol-22 EventData schema (herdr api schema --json)"
+}

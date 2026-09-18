@@ -1,0 +1,20 @@
+{
+  "body": {
+    "text": "Which interface should the transport use?"
+  },
+  "body_sha256": "28e8579a29df555bd15f0b8fc6c85ddecb04bc7ea66831f320c6b2e11f3b4c3a",
+  "kind": "note",
+  "message_id": "fixture-message-1",
+  "recipient": {
+    "launch_id": "worker-launch-1",
+    "member_id": "worker"
+  },
+  "reply_to": null,
+  "run_id": "fixture-run",
+  "schema": "shop-transport-v1",
+  "sender": {
+    "launch_id": "lead-launch-1",
+    "member_id": "lead"
+  },
+  "shop_id": "fixture-shop"
+}

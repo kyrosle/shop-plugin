@@ -1,0 +1,5 @@
+# Internal records may exist locally but are not distributable docs.
+PLAN-*.md
+SPEC-*.md
+REFERENCE-ANALYSIS.md
+PUBLISHING.md

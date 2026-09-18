@@ -1,0 +1,69 @@
+id = "shop.workstation"
+name = "Pi Shop Workstation"
+version = "0.1.0-alpha.1"
+min_herdr_version = "0.9.0"
+description = "Visible Pi workstation with file tickets and explicit recovery"
+platforms = ["macos", "linux"]
+
+[[actions]]
+id = "open"
+title = "Open or restore Shop"
+contexts = ["workspace"]
+command = ["python3", "core/plugin.py", "open"]
+
+[[actions]]
+id = "close"
+title = "Shut down Shop (user action · preview + verified close)"
+contexts = ["workspace"]
+command = ["python3", "core/plugin.py", "close"]
+
+[[actions]]
+id = "shutdown-preview"
+title = "Preview Shop shutdown (no close)"
+contexts = ["workspace"]
+command = ["python3", "core/shop.py", "shutdown", "--preview"]
+
+[[actions]]
+id = "recovery"
+title = "Recovery/reconciliation plan (read-only)"
+contexts = ["workspace"]
+command = ["python3", "core/shop.py", "recovery"]
+
+[[actions]]
+id = "status"
+title = "Inspect Shop (plugin log)"
+contexts = ["workspace"]
+command = ["python3", "core/plugin.py", "status"]
+
+[[actions]]
+id = "recover"
+title = "Write recovery report (no restart)"
+contexts = ["workspace"]
+command = ["python3", "core/plugin.py", "recover"]
+
+[[actions]]
+id = "doctor"
+title = "Check Shop environment (plugin log)"
+contexts = ["workspace"]
+command = ["python3", "core/plugin.py", "doctor"]
+
+# Bounded event facts for the read-only status snapshot. Herdr runs the command
+# with HERDR_PLUGIN_EVENT / HERDR_PLUGIN_EVENT_JSON plus the pane/workspace/tab
+# ids; core/events.py validates the payload, appends one capped fact line and
+# never authorizes, dispatches, focuses or closes anything. Facts are
+# display-only: herdr-shop status and patrol always re-read live before any
+# action. Controlled real capture remains an isolated-environment acceptance step.
+[[events]]
+on = "pane.agent_status_changed"
+platforms = ["macos", "linux"]
+command = ["python3", "core/events.py", "record"]
+
+[[events]]
+on = "pane.closed"
+platforms = ["macos", "linux"]
+command = ["python3", "core/events.py", "record"]
+
+[[events]]
+on = "pane.exited"
+platforms = ["macos", "linux"]
+command = ["python3", "core/events.py", "record"]

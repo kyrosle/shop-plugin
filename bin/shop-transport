@@ -1,0 +1,4 @@
+#!/bin/sh
+# Shop built-in transport CLI wrapper (business side only; no transport I/O).
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd) || exit 1
+exec python3 "$ROOT/core/transport_cli.py" "$@"

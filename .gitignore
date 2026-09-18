@@ -1,0 +1,21 @@
+node_modules/
+__pycache__/
+*.py[cod]
+.DS_Store
+.shop/
+runtime/
+*.log
+.env
+.env.*
+!.env.example
+coverage/
+dist/
+
+# Machine-local synchronization settings must never be published.
+/sync
+
+# Internal development records are not public source documentation.
+/docs/PLAN-*.md
+/docs/SPEC-*.md
+/docs/REFERENCE-ANALYSIS.md
+/docs/PUBLISHING.md

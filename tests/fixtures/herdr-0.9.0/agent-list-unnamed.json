@@ -1,0 +1,23 @@
+{
+  "id": "cli:agent:list",
+  "result": {
+    "agents": [
+      {
+        "agent": "pi",
+        "agent_status": "idle",
+        "cwd": "/tmp/shop-demo/wt3",
+        "focused": false,
+        "foreground_cwd": "/tmp/shop-demo/wt3",
+        "pane_id": "w2:p6",
+        "revision": 3,
+        "state_change_seq": 315,
+        "tab_id": "w2:t6",
+        "terminal_id": "term_sanitized6",
+        "terminal_title": "π - demo",
+        "terminal_title_stripped": "π - demo",
+        "workspace_id": "w2"
+      }
+    ],
+    "type": "agent_list"
+  }
+}

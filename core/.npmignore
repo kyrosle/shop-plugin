@@ -1,0 +1,3 @@
+# Python test/runtime caches are local artifacts, not package sources.
+__pycache__/
+*.py[cod]
