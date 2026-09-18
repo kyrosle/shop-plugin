@@ -19,8 +19,9 @@ class PublicationPrivacyTests(unittest.TestCase):
         self.assertEqual(snapshot['generator']['core_root'], '/opt/shop-plugin')
 
     def test_only_public_user_guides_are_present(self):
-        public = {'ARCHITECTURE.md', 'MIGRATION.md', 'MODELS.md', 'WORKBENCH.md', 'WORKFLOW.md'}
-        self.assertEqual({path.name for path in (ROOT / 'docs').glob('*.md')}, public)
+        guides = {'ARCHITECTURE.md', 'MIGRATION.md', 'MODELS.md', 'WORKBENCH.md', 'WORKFLOW.md', 'LANGUAGE.md'}
+        public = {f'{lang}/{name}' for lang in ('en', 'zh-CN') for name in guides}
+        self.assertEqual({str(path.relative_to(ROOT / 'docs')) for path in (ROOT / 'docs').rglob('*.md')}, public)
         package = json.loads((ROOT / 'package.json').read_text())
         self.assertNotIn('docs', package['files'])
         self.assertEqual({name for name in package['files'] if name.startswith('docs/')},
@@ -32,10 +33,12 @@ class PublicationPrivacyTests(unittest.TestCase):
         for name in ('PLAN-*.md', 'SPEC-*.md', 'REFERENCE-ANALYSIS.md', 'PUBLISHING.md'):
             self.assertIn('/docs/' + name, git_rules)
             self.assertIn(name, npm_rules)
+            self.assertIn('/docs/**/' + name, git_rules)
+            self.assertIn('**/' + name, npm_rules)
 
     def test_public_markdown_links_resolve(self):
-        paths = [ROOT / 'README.md', ROOT / 'THIRD_PARTY.md', ROOT / 'transport/NOTICE.md',
-                 *sorted((ROOT / 'docs').glob('*.md'))]
+        paths = [ROOT / 'README.md', ROOT / 'README.zh-CN.md', ROOT / 'THIRD_PARTY.md', ROOT / 'transport/NOTICE.md',
+                 *sorted((ROOT / 'docs').rglob('*.md'))]
         for path in paths:
             for target in re.findall(r'\[[^\]]+\]\(([^)]+)\)', path.read_text()):
                 if target.startswith('#') or urlsplit(target).scheme:

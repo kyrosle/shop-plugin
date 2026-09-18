@@ -1,6 +1,6 @@
 #!/usr/bin/python3
 """Herdr workstation with explicit file-ticket dispatch and recovery; no scheduler or conversation cloning."""
-import argparse
+from language import ArgumentParser, t
 import fcntl
 import hashlib
 import json
@@ -20,6 +20,7 @@ import herdr
 import identity
 import messaging
 import locking
+import language as language_module
 
 # One typed adapter owns every Herdr subprocess/API call in this package.
 HERDR = herdr.Herdr()
@@ -78,23 +79,28 @@ def notify(title, body):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', nargs='?', choices=['setup', 'status', 'add-worker', 'add-lead', 'remove-lead', 'remove-worker', 'reset', 'bind', 'unbind', 'dispatch', 'resume', 'recover-lead', 'patrol', 'pause', 'route-check', 'message', 'shutdown', 'recovery'], default='setup')
-    parser.add_argument('target', nargs='?', help='Run ID for bind, ticket ID for dispatch, or exact auxiliary name for removal')
+    if sys.argv[1:2] == ['language']:
+        language_module.cli(sys.argv[2:])
+        return
+    parser = ArgumentParser(description=t(__doc__))
+    parser.add_argument('action', nargs='?', choices=['setup', 'status', 'add-worker', 'add-lead', 'remove-lead', 'remove-worker', 'reset', 'bind', 'unbind', 'dispatch', 'resume', 'recover-lead', 'patrol', 'pause', 'route-check', 'message', 'shutdown', 'recovery', 'language'], default='setup')
+    parser.add_argument('target', nargs='?', help=t('Run ID for bind, ticket ID for dispatch, or exact auxiliary name for removal'))
     parser.add_argument('--handoff-complete', action='store_true',
-                        help='Attest results are saved, dependents released, and unsent input disposable')
-    parser.add_argument('--cwd', help='Existing independent git worktree for additional agent')
-    parser.add_argument('--models-file', help='Model/thinking configuration for a NEW shop; pinned for future launches')
+                        help=t('Attest results are saved, dependents released, and unsent input disposable'))
+    parser.add_argument('--cwd', help=t('Existing independent git worktree for additional agent'))
+    parser.add_argument('--models-file', help=t('Model/thinking configuration for a NEW shop; pinned for future launches'))
     parser.add_argument('--dry-run', action='store_true')
-    parser.add_argument('--apply', action='store_true', help='Explicit recover-lead execution')
-    parser.add_argument('--seconds', type=int, default=0, help='patrol wait window, 0..120 seconds')
-    parser.add_argument('--reason', help='Evidence-based reason for pause')
-    parser.add_argument('--file', help='Route envelope JSON for route-check')
-    parser.add_argument('--text', help='Light message, 1..4000 characters')
-    parser.add_argument('--allow-busy', action='store_true', help='Explicit message to working member, not cancellation')
-    parser.add_argument('--plan', help='Shutdown plan id from a previous preview (execute)')
-    parser.add_argument('--preview', action='store_true', help='Shutdown/recovery preview only; never closes')
+    parser.add_argument('--apply', action='store_true', help=t('Explicit recover-lead execution'))
+    parser.add_argument('--seconds', type=int, default=0, help=t('patrol wait window, 0..120 seconds'))
+    parser.add_argument('--reason', help=t('Evidence-based reason for pause'))
+    parser.add_argument('--file', help=t('Route envelope JSON for route-check'))
+    parser.add_argument('--text', help=t('Light message, 1..4000 characters'))
+    parser.add_argument('--allow-busy', action='store_true', help=t('Explicit message to working member, not cancellation'))
+    parser.add_argument('--plan', help=t('Shutdown plan id from a previous preview (execute)'))
+    parser.add_argument('--preview', action='store_true', help=t('Shutdown/recovery preview only; never closes'))
     args = parser.parse_args()
+    if args.action == 'language':
+        parser.error('Use herdr-shop language [auto|zh-CN|en] without other Shop flags')
     if args.models_file and args.action != 'setup':
         parser.error('--models-file only for setup of a new shop')
     if args.action == 'message':
@@ -160,7 +166,7 @@ def main():
         return
     with (state_dir / (key + '.lock')).open('w') as lock:
         locking.acquire(lock, wait_seconds=30 if args.action == 'reset' else 0,
-                        on_wait=lambda: notify('Shop 收工等待中', '开工或成员操作尚未完成；最多等待30秒，之后重新检查身份与任务状态。'))
+                        on_wait=lambda: notify(t('Shop shutdown waiting'), t('Startup/member operation still running; wait at most 30 seconds, then recheck identity and task state.')))
         state = json.loads(path.read_text()) if path.exists() else None
         if args.action == 'status':
             # One bounded, redacted producer for every status reader. No raw state dump.
@@ -486,7 +492,7 @@ def reset_shop(path, state, caller, dry_run):
     path.unlink()
     for item in items:
         cleanup_prompt(item)
-    print('Reset complete: Architect preserved; code, tickets and worktrees untouched.')
+    print(t('Reset complete: Architect preserved; code, tickets and worktrees untouched.'))
 
 
 def cleanup_prompt(item):
@@ -497,11 +503,11 @@ def cleanup_prompt(item):
     try:
         (state_root() / 'runtime' / 'prompts' / (name + '.md')).unlink(missing_ok=True)
     except OSError as error:
-        print('Prompt cleanup skipped: ' + str(error), file=sys.stderr)
+        print(t('Prompt cleanup skipped: {0}', str(error)), file=sys.stderr)
     except RuntimeError as error:
         # Best-effort cleanup must not fail a completed pane operation when this
         # checkout has no machine runtime binding (for example a review checkout).
-        print('Prompt cleanup skipped (no machine runtime binding): ' + str(error), file=sys.stderr)
+        print(t('Prompt cleanup skipped (no machine runtime binding): {0}', str(error)), file=sys.stderr)
 
 
 def start(item, role, state):
@@ -560,7 +566,7 @@ if __name__ == '__main__':
             log.write(ct.stamp() + ' ' + message + '\n')
         if os.environ.get('HERDR_ACTIVE_PANE_ID') or os.environ.get('HERDR_PLUGIN_ACTION_ID'):
             try:
-                HERDR.notify('Shop operation stopped', message[:600])
+                HERDR.notify(t('Shop operation stopped'), message[:600])
             except Exception:
                 pass
         sys.exit(1)

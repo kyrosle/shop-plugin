@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Herdr actions and explicit bridge configuration. No install-time mutation."""
-import argparse
+from language import ArgumentParser, t
 import json
 import os
 from pathlib import Path
@@ -15,7 +15,7 @@ HERDR = herdr.Herdr()
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = ArgumentParser(description=t(__doc__))
     parser.add_argument('action', choices=['configure', 'doctor', 'open', 'close', 'status', 'recover',
                                            'shutdown'])
     parser.add_argument('--apply', action='store_true')
@@ -77,16 +77,16 @@ def main():
             document = {}
         decision = document.get('decision')
         if decision == 'closed':
-            HERDR.notify('Shop 已收工', '执行成员已关闭并经核实，Architect 保留。')
+            HERDR.notify(t('Shop closed'), t('Execution members closed and verified; Architect retained.'))
         elif decision == 'already_closed':
-            HERDR.notify('Shop 已收工', '此前已完成收工并经核实；未再关闭任何 pane。')
+            HERDR.notify(t('Shop closed'), t('Shutdown previously completed and verified; no additional panes closed.'))
         else:
-            HERDR.notify('Shop 收工未完成',
-                         '决策 %s：存在阻塞或部分关闭，状态与票据保留；请查看插件日志与恢复计划。'
+            HERDR.notify(t('Shop shutdown incomplete'),
+                         t('Decision %s: blocked or partially closed; state and tickets retained. Inspect plugin logs and recovery plan.')
                          % (decision or 'unknown'))
         return
     if args.action == 'open':
-        HERDR.notify('Shop 已就绪', '成员启动完成，可以派工或收工。')
+        HERDR.notify(t('Shop ready'), t('Members started; ready for explicit dispatch or shutdown.'))
     if args.action == 'status':
         # Same bounded snapshot as herdr-shop status / shop_status: printed to the
         # plugin action log (bounded) and summarised in the notification.
@@ -95,12 +95,12 @@ def main():
             document = json.loads(r.stdout)
             attention = document.get('attention') or []
             warn = sum(1 for entry in attention if entry.get('severity') == 'warn')
-            body = 'phase %s · run %s · members %s · attention %s (warn %s). Full snapshot in the plugin action log.' % (
+            body = t('phase %s · run %s · members %s · attention %s (warn %s). Full snapshot in the plugin action log.') % (
                 (document.get('shop') or {}).get('phase'), (document.get('shop') or {}).get('run_id') or 'unbound',
                 len(document.get('members') or []), len(attention), warn)
         except (ValueError, AttributeError):
-            body = 'Snapshot written to plugin action log; use shop_status in Pi for the bounded view.'
-        HERDR.notify('Shop status', body)
+            body = t('Snapshot written to plugin action log; use shop_status in Pi for the bounded view.')
+        HERDR.notify(t('Shop status'), body)
 
 
 if __name__ == '__main__':
@@ -109,5 +109,5 @@ if __name__ == '__main__':
     except Exception as e:
         print('shop-plugin: ' + str(e), file=sys.stderr)
         if os.environ.get('HERDR_PLUGIN_ID'):
-            HERDR.notify('Shop operation stopped', str(e)[:600])
+            HERDR.notify(t('Shop operation stopped'), str(e)[:600])
         sys.exit(1)

@@ -1,6 +1,6 @@
 #!/usr/bin/python3
 """Explicit repository run lifecycle and conservative retention; no agents or worktree deletion."""
-import argparse
+from language import ArgumentParser, t
 import datetime as dt
 import fcntl
 import json
@@ -234,13 +234,13 @@ def authorize_ticket(repo, rid, tid, op):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--repo', help='Explicit project root, especially from auxiliary worktree')
+    parser = ArgumentParser(description=t(__doc__))
+    parser.add_argument('--repo', help=t('Explicit project root, especially from auxiliary worktree'))
     sub = parser.add_subparsers(dest='action', required=True)
     new_parser = sub.add_parser('new')
     new_parser.add_argument('title')
     new_parser.add_argument('--independent', action='store_true',
-                            help='Create separate run without reading/changing current.json or existing runs/bindings')
+                            help=t('Create separate run without reading/changing current.json or existing runs/bindings'))
     for name in ('list', 'status'):
         sub.add_parser(name)
     for name in ('use', 'adopt', 'finish', 'block', 'resume', 'delete'):
@@ -259,9 +259,9 @@ def main():
     g.add_argument('--dry-run', action='store_true')
     p = sub.add_parser('ticket')
     p.add_argument('operation', choices=['new', 'publish', 'checkpoint', 'retry', 'accept', 'cancel', 'list', 'revise'])
-    p.add_argument('id', help='Explicit run ID; never silently follow current')
+    p.add_argument('id', help=t('Explicit run ID; never silently follow current'))
     p.add_argument('ticket_id', nargs='?')
-    p.add_argument('--file', help='JSON draft, or review evidence for accept')
+    p.add_argument('--file', help=t('JSON draft, or review evidence for accept'))
     p.add_argument('--writer-stopped', action='store_true')
     args = parser.parse_args()
     repo = args.repo or subprocess.check_output(['git', 'rev-parse', '--show-toplevel'], text=True).strip()

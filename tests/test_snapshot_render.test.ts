@@ -18,7 +18,7 @@ test("snapshot facts expose counts without raw content", () => {
 });
 
 test("compact summary renders members, tickets, attention and read-only focus links", () => {
-  const summary = summarizeSnapshot(SNAPSHOT);
+  const summary = summarizeSnapshot(SNAPSHOT, 4000, "en");
   expect(summary.length).toBeLessThanOrEqual(4000);
   expect(summary).toContain("shop.snapshot/v1");
   expect(summary).toContain("demo-worker");
@@ -37,7 +37,7 @@ test("compact summary renders members, tickets, attention and read-only focus li
 });
 
 test("unreadable snapshot input degrades to a bounded message", () => {
-  const summary = summarizeSnapshot("not json at all");
+  const summary = summarizeSnapshot("not json at all", 4000, "en");
   expect(summary).toContain("unreadable");
   expect(summary.length).toBeLessThan(700);
   const facts = snapshotFacts("not json at all");
@@ -58,7 +58,7 @@ test("long snapshots stay bounded by the summary limit", () => {
     unknowns: ["u"],
     events: { coverage: "partial", revision: 3, fact_count: 2, reason: "revision gap" },
   });
-  const bounded = summarizeSnapshot(huge);
+  const bounded = summarizeSnapshot(huge, 4000, "en");
   expect(bounded.length).toBeLessThanOrEqual(4000);
   expect(bounded).toContain("events: partial");
   expect(bounded).toContain("transport:");

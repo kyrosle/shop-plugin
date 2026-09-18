@@ -1,5 +1,9 @@
 # Shop 工作台
 
+[English](../en/WORKBENCH.md) · [README](../../README.zh-CN.md)
+
+界面语言通过 `/shop-language` 选择，见[语言](LANGUAGE.md)。
+
 入口：Herdr 内 Pi 的 `/shop-ui`。需已登记 Shop；查看不派工、不聚焦、不关闭窗口。业务变更还要求显式绑定 run。
 
 ## 七个入口

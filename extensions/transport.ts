@@ -14,6 +14,7 @@
 //    reject, verification failure, injection failure);
 //  * `session_start` is idempotent and a stop/start race cannot orphan a client;
 //  * no Herdr prompt fallback and no external intercom path.
+import { t } from "./i18n.js";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { createHash, randomUUID } from "node:crypto";
 import { readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
@@ -322,7 +323,7 @@ export async function startShopTransport(pi: ExtensionAPI, ctx: ExtensionContext
   const runId = state.run_id;
   const mine = ++generation;
   client.onError?.((error) => {
-    if (ctx.hasUI) ctx.ui.setStatus("shop-transport", `transport error: ${String(error).slice(0, 120)}`);
+    if (ctx.hasUI) ctx.ui.setStatus("shop-transport", t("Transport error: {0}", [String(error).slice(0, 120)]));
   });
 
   client.onMessage((message) => {
@@ -354,18 +355,18 @@ export async function startShopTransport(pi: ExtensionAPI, ctx: ExtensionContext
         customType: "shop_transport", content: text, display: true, details,
       }, sendOptions),
     }, message).catch((error) => {
-      if (ctx.hasUI) ctx.ui.setStatus("shop-transport", `receive outcome unknown: ${String(error).slice(0, 100)}`);
+      if (ctx.hasUI) ctx.ui.setStatus("shop-transport", t("Receive outcome unknown: {0}", [String(error).slice(0, 100)]));
     });
   });
   client.onMessageControl((control) => {
-    if (ctx.hasUI) ctx.ui.notify(`Shop transport: ${control.message_id} cancelled before injection`, "info");
+    if (ctx.hasUI) ctx.ui.notify(t("Shop transport: {0} cancelled before injection", [control.message_id]), "info");
   });
 
   try {
     await client.connect(identity);
   } catch (error) {
     await client.disconnect();
-    if (ctx.hasUI) ctx.ui.setStatus("shop-transport", `transport unavailable: ${String(error).slice(0, 120)}`);
+    if (ctx.hasUI) ctx.ui.setStatus("shop-transport", t("Transport unavailable: {0}", [String(error).slice(0, 120)]));
     return { started: false, reason: `connect-failed: ${String(error).slice(0, 200)}` };
   }
   if (mine !== generation) {
@@ -389,7 +390,7 @@ export async function startShopTransport(pi: ExtensionAPI, ctx: ExtensionContext
       "--status", receipt.status, "--state", statePath, "--self", member.name])
       .catch(() => { /* missing persistence never upgrades a receipt */ });
   });
-  if (ctx.hasUI) ctx.ui.setStatus("shop-transport", `transport ready · ${identity.member_id} · ${client.endpoint_epoch?.slice(0, 8)}`);
+  if (ctx.hasUI) ctx.ui.setStatus("shop-transport", t("Transport ready · {0} · {1}", [identity.member_id, client.endpoint_epoch?.slice(0, 8)]));
   return { started: true, member: identity.member_id };
 }
 

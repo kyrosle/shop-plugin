@@ -104,7 +104,7 @@ class PluginTests(unittest.TestCase):
         self.assertIn("document.get('decision')", source)
         self.assertIn("decision == 'closed'", source)
         # recovery_required/blocked/unknown fall through to the failure notification.
-        self.assertIn('Shop 收工未完成', source)
+        self.assertIn("t('Shop shutdown incomplete')", source)
         self.assertNotIn("document.get('decision') or", source)
         # Shutdown execution requires Herdr plugin-action context.
         self.assertIn("HERDR_PLUGIN_ACTION_ID", source)

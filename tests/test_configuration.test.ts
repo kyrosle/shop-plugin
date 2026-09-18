@@ -29,7 +29,7 @@ async function fixture(fn: (f: any) => Promise<void>) {
   const old = { ...process.env };
   const bridge = { protocol: 1, core_root: resolve("."), state_dir: join(root, "state"), config_dir: join(root, "config") };
   mkdirSync(bridge.config_dir); mkdirSync(bridge.state_dir);
-  const env = { SHOP_LOCATOR: join(root, "bridge.json"), SHOP_CONFIG_DIR: bridge.config_dir, SHOP_STATE_DIR: bridge.state_dir,
+  const env = { LC_ALL: "zh_CN.UTF-8", SHOP_LOCATOR: join(root, "bridge.json"), SHOP_CONFIG_DIR: bridge.config_dir, SHOP_STATE_DIR: bridge.state_dir,
     HERDR_ENV: "1", HERDR_SOCKET_PATH: "/test/socket", HERDR_TAB_ID: "tab", HERDR_PANE_ID: "pane" };
   writeFileSync(env.SHOP_LOCATOR, JSON.stringify(bridge));
   Object.assign(process.env, env);
@@ -176,12 +176,14 @@ test("model availability and thinking capability fail before save", async () => 
   expect(f.notices.join(" ")).toContain("TUI");
 }));
 
-test("panel handles scope/save/reset/cancel and never overflows narrow width", async () => fixture(async f => {
+for (const language of ["en", "zh-CN"]) test(`${language} settings actions and narrow-screen bounds`, async () => fixture(async f => {
+  writeFileSync(join(f.bridge.config_dir, "language.json"), JSON.stringify({ version: 1, language }));
   const view = await configCall<ConfigView>(f.pi, f.bridge, { action: "load", ...configRequest(configContext(f.bridge, f.ctx), {}) });
   const results: any[] = [];
   const panel = settingsPanel("session", "session:test", view.layers.session.profiles, view, r => results.push(r), () => {}, ["global", "session"], true,
     { label: t => t, value: t => t, description: t => t, hint: t => t, cursor: "›" });
-  for (const width of [12, 40, 80]) for (const line of panel.render(width)) expect(visibleWidth(line)).toBeLessThanOrEqual(width);
+  expect(panel.render(120).join(" ")).toContain(language === "en" ? "Shop settings" : "Shop 设置");
+  for (const width of [4, 12, 40, 80]) for (const line of panel.render(width)) expect(visibleWidth(line)).toBeLessThanOrEqual(width);
   for (const input of ["\t", "s", "r", "\x1b"]) panel.handleInput!(input);
   expect(results.map(r => r.type)).toEqual(["scope", "save", "reset", "cancel"]);
 }));

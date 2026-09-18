@@ -1,3 +1,4 @@
+import { selectAction, t } from "./i18n.js";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { getSettingsListTheme } from "@earendil-works/pi-coding-agent";
 import { getSupportedThinkingLevels, clampThinkingLevel } from "@earendil-works/pi-ai";
@@ -8,8 +9,8 @@ import { configCall, configContext, configRequest, SESSION_CONFIG, SEATS, sessio
   ConfigPublisher } from "./configuration.js";
 
 const SCOPES: Scope[] = ["global", "project", "session"];
-const SCOPE_LABEL = { global: "全局", project: "目录", session: "会话" };
-const SEAT_LABEL = { lead: "主 Lead", "lead-2": "辅助 Lead", worker: "Worker 1", "worker-2": "Worker 2" };
+const scopeLabels = () => ({ global: t("Global"), project: t("Project"), session: t("Session") });
+const seatLabels = () => ({ lead: t("Primary Lead"), "lead-2": t("Auxiliary Lead"), worker: "Worker 1", "worker-2": "Worker 2" });
 type Result = { type: "cancel" | "save" | "reset" | "scope" } | { type: "edit"; seat: Seat; field: "model" | "thinking" };
 
 /** Uses Pi's SettingsList for navigation/scrolling; outer keys match Curator. */
@@ -20,9 +21,9 @@ export function settingsPanel(scope: Scope, target: string, draft: Profiles, vie
   const rows = SEATS.flatMap(seat => (["model", "thinking"] as const).map(field => {
     const value = draft[seat][field];
     const changed = value !== layer.profiles[seat][field];
-    const source = changed ? "草稿" : layer.sources[seat][field] ?? "内置";
-    return { id: `${seat}:${field}`, label: `${SEAT_LABEL[seat]} · ${field === "model" ? "模型" : "思考"}`,
-      currentValue: `${value ?? (field === "model" ? "未配置" : "Pi 默认")} ← ${source}` };
+    const source = changed ? t("Draft") : layer.sources[seat][field] ?? t("Built-in");
+    return { id: `${seat}:${field}`, label: `${seatLabels()[seat]} · ${field === "model" ? t("Model") : t("Thinking")}`,
+      currentValue: `${value ?? (field === "model" ? t("Not configured") : t("Pi default"))} ← ${source}` };
   }));
   // Submenu returns control to the command, which opens Pi's model/effort selector.
   const list = new SettingsList(rows.map(row => ({ ...row, submenu: () => {
@@ -42,11 +43,11 @@ export function settingsPanel(scope: Scope, target: string, draft: Profiles, vie
       requestRender();
     },
     render(width) {
-      const tabs = SCOPES.map(s => !availableScopes.includes(s) ? `${SCOPE_LABEL[s]}×` : s === scope ? `[${SCOPE_LABEL[s]}]` : SCOPE_LABEL[s]).join("  ");
-      return ["Shop 设置 · " + tabs, target,
-        "Architect：跟随当前 Pi；使用 /model、/thinking 修改", ...list.render(width),
-        existingShop ? "已有工位快照不变；保存只影响下次新建工位" : "保存只影响下次新建工位；不会自动开窗",
-        "Tab 切层 · Enter 修改 · S 预览保存 · R 重置本层 · Esc 取消"]
+      const tabs = SCOPES.map(s => !availableScopes.includes(s) ? `${scopeLabels()[s]}×` : s === scope ? `[${scopeLabels()[s]}]` : scopeLabels()[s]).join("  ");
+      return [t("Shop settings · ") + tabs, target,
+        t("Architect: current Pi; change with /model and /thinking"), ...list.render(width),
+        existingShop ? t("Existing Shop snapshots stay unchanged; saves affect new Shops only") : t("Saves affect new Shops only; no panes are opened automatically"),
+        t("Tab scope · Enter edit · S preview save · R reset scope · Esc cancel")]
         .map(line => truncateToWidth(line, Math.max(0, width)));
     },
   };
@@ -64,31 +65,31 @@ export function validateModels(ctx: ExtensionCommandContext, profiles: Profiles)
     const profile = profiles[seat];
     if (!profile.model) continue; // Partial layers may be saved; setup requires all models.
     const model = available.find(m => `${m.provider}/${m.id}` === profile.model);
-    if (!model) throw new Error(`${SEAT_LABEL[seat]} 模型当前不可用：${profile.model}`);
+    if (!model) throw new Error(t("{0} model currently unavailable: {1}", [seatLabels()[seat], profile.model]));
     if (profile.thinking != null && !getSupportedThinkingLevels(model).includes(profile.thinking))
-      throw new Error(`${SEAT_LABEL[seat]} 不支持 ${profile.thinking}，请重新选择档位`);
+      throw new Error(t("{0} does not support {1}; select another thinking level", [seatLabels()[seat], profile.thinking]));
   }
 }
 
 export async function editConfiguration(pi: ExtensionAPI, ctx: ExtensionCommandContext,
   publisher: ConfigPublisher, args = ""): Promise<void> {
-  if (!ctx.hasUI || ctx.mode !== "tui") { ctx.ui.notify("/shop-config 需要 Pi TUI", "warning"); return; }
-  if (!ctx.isIdle()) { ctx.ui.notify("等待当前回合结束，再配置 Shop。未保存。", "warning"); return; }
-  if (args && args !== "migrate") { ctx.ui.notify("用法：/shop-config [migrate]", "info"); return; }
+  if (!ctx.hasUI || ctx.mode !== "tui") { ctx.ui.notify(t("/shop-config requires Pi TUI"), "warning"); return; }
+  if (!ctx.isIdle()) { ctx.ui.notify(t("Wait for the current turn to finish before configuring Shop. Nothing saved."), "warning"); return; }
+  if (args && args !== "migrate") { ctx.ui.notify(t("Usage: /shop-config [migrate]"), "info"); return; }
   const bridge = readBridge();
-  if (!bridge) throw new Error("Shop bridge 未配置；先运行 core/plugin.py configure");
+  if (!bridge) throw new Error(t("Shop bridge unconfigured; run core/plugin.py configure first"));
   const context = configContext(bridge, ctx);
   const capturedId = ctx.sessionManager.getSessionId();
   const session = sessionSettings(ctx.sessionManager.getBranch(), context.root);
   const signal = publisher.signal;
   const guard = () => {
     if (signal.aborted || ctx.sessionManager.getSessionId() !== capturedId || !ctx.isIdle())
-      throw new Error("会话/回合已变化；未保存，请重新打开 /shop-config");
-    if (JSON.stringify(readBridge()) !== JSON.stringify(bridge)) throw new Error("Shop bridge 已变化；未保存，请重新打开");
+      throw new Error(t("Session/turn changed; nothing saved. Reopen /shop-config"));
+    if (JSON.stringify(readBridge()) !== JSON.stringify(bridge)) throw new Error(t("Shop bridge changed; nothing saved. Reopen the panel"));
     const current = configContext(bridge, ctx);
     if (JSON.stringify(current) !== JSON.stringify(context)
         || sessionSettings(ctx.sessionManager.getBranch(), current.root).marker !== session.marker)
-      throw new Error("项目、信任、分支设置或工位已变化；未保存，请重新打开 /shop-config");
+      throw new Error(t("Project, trust, branch settings or Shop changed; nothing saved. Reopen /shop-config"));
   };
   const base = configRequest(context, session.overrides);
   const view = await configCall<ConfigView>(pi, bridge, { ...base, action: "load" });
@@ -97,10 +98,10 @@ export async function editConfiguration(pi: ExtensionAPI, ctx: ExtensionCommandC
     const request = { ...base, action: "migrate", revisions: view.revisions };
     const preview = await configCall<{ proposed: unknown; backup: string }>(pi, bridge, request);
     guard();
-    if (!await ctx.ui.confirm("迁移旧 models.json？", `${JSON.stringify(preview.proposed, null, 2)}\n旧文件保留：${preview.backup}\n现有工位不变。`, { signal })) return;
+    if (!await ctx.ui.confirm(t("Migrate legacy models.json?"), t("{0}\nOriginal file retained: {1}\nExisting Shops stay unchanged.", [JSON.stringify(preview.proposed, null, 2), preview.backup]), { signal })) return;
     guard();
     await configCall(pi, bridge, { ...request, apply: true });
-    ctx.ui.notify("已迁移到 settings.json；旧 models.json 保留，不再双写。", "info");
+    ctx.ui.notify(t("Migrated to settings.json; legacy models.json retained, no further dual writes."), "info");
     await publisher.start(ctx);
     return;
   }
@@ -135,23 +136,25 @@ export async function editConfiguration(pi: ExtensionAPI, ctx: ExtensionCommandC
       const parent = view.layers[scope].parent;
       if (field === "model") {
         const models = ctx.modelRegistry.getAvailable().map(m => `${m.provider}/${m.id}`).sort();
-        const inherit = `继承父层：${parent[seat].model ?? "未配置"}`;
-        const choice = await ctx.ui.select(SEAT_LABEL[seat] + " 模型", [inherit, ...models], { signal });
+        const inherit = t("Inherit parent: {0}", [parent[seat].model ?? t("Not configured")]);
+        const choice = await selectAction(ctx, seatLabels()[seat] + t(" model"),
+          [["inherit", inherit], ...models.map(id => ["model:" + id, id] as const)], { signal });
         guard();
-        if (choice === inherit) inherited(draft, parent, seat, field);
-        else if (choice && models.includes(choice)) {
-          draft[seat].model = choice;
-          const model = ctx.modelRegistry.getAvailable().find(m => `${m.provider}/${m.id}` === choice)!;
+        if (choice === "inherit") inherited(draft, parent, seat, field);
+        else if (choice?.startsWith("model:") && models.includes(choice.slice(6))) {
+          draft[seat].model = choice.slice(6);
+          const model = ctx.modelRegistry.getAvailable().find(m => `${m.provider}/${m.id}` === draft[seat].model)!;
           if (draft[seat].thinking != null) draft[seat].thinking = clampThinkingLevel(model, draft[seat].thinking!);
         }
       } else {
         const model = ctx.modelRegistry.getAvailable().find(m => `${m.provider}/${m.id}` === draft[seat].model);
         const levels = model ? getSupportedThinkingLevels(model) : [];
-        const inherit = `继承父层：${parent[seat].thinking ?? "Pi 默认"}`;
-        const choice = await ctx.ui.select(SEAT_LABEL[seat] + " 思考档位", [inherit, "Pi 默认（显式）", ...levels], { signal });
+        const inherit = t("Inherit parent: {0}", [parent[seat].thinking ?? t("Pi default")]);
+        const choice = await selectAction(ctx, seatLabels()[seat] + t(" thinking level"),
+          [["inherit", inherit], ["default", t("Pi default (explicit)")], ...levels.map(id => [id, id] as const)], { signal });
         guard();
-        if (choice === inherit) inherited(draft, parent, seat, field);
-        else if (choice === "Pi 默认（显式）") draft[seat].thinking = null;
+        if (choice === "inherit") inherited(draft, parent, seat, field);
+        else if (choice === "default") draft[seat].thinking = null;
         else if (choice && levels.includes(choice as Thinking)) draft[seat].thinking = choice as Thinking;
       }
       continue;
@@ -161,8 +164,8 @@ export async function editConfiguration(pi: ExtensionAPI, ctx: ExtensionCommandC
     const request = { ...base, action: "prepare", scope, revisions: view.revisions, draft, reset };
     const prepared = await configCall<{ overrides: Overrides }>(pi, bridge, request);
     guard();
-    if (!await ctx.ui.confirm(reset ? "清除本层模型覆盖？" : "保存 Shop 配置？",
-      `${SCOPE_LABEL[scope]} · ${target}\n旧覆盖：${JSON.stringify(view.layers[scope].overrides)}\n新覆盖：${JSON.stringify(prepared.overrides)}\n仅下次新建工位生效；现有工位不变。`, { signal })) continue;
+    if (!await ctx.ui.confirm(reset ? t("Clear model overrides in this scope?") : t("Save Shop configuration?"),
+      t("{0} · {1}\nOld overrides: {2}\nNew overrides: {3}\nAffects new Shops only; existing Shops stay unchanged.", [scopeLabels()[scope], target, JSON.stringify(view.layers[scope].overrides), JSON.stringify(prepared.overrides)]), { signal })) continue;
     guard();
     if (!reset) validateModels(ctx, draft);
     if (scope === "session") {
@@ -173,7 +176,7 @@ export async function editConfiguration(pi: ExtensionAPI, ctx: ExtensionCommandC
     } else {
       await configCall(pi, bridge, { ...request, action: "save" });
     }
-    ctx.ui.notify(`${SCOPE_LABEL[scope]}配置已保存；下次新建工位生效，现有工位未修改。`, "info");
+    ctx.ui.notify(t("{0} settings saved; applies to new Shops. Existing Shops unchanged.", [scopeLabels()[scope]]), "info");
     await publisher.start(ctx);
     return;
   }

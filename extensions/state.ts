@@ -1,3 +1,4 @@
+import { t, resolveLanguage, type Language } from "./i18n.js";
 import { createHash } from "node:crypto";
 import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -71,26 +72,27 @@ export function snapshotFacts(text: string): SnapshotFacts {
  * Compact human view of one snapshot. The producer is already bounded and
  * redacted, so this only shortens it for a notification/tool result.
  */
-export function summarizeSnapshot(text: string, limit = 4000): string {
+export function summarizeSnapshot(text: string, limit = 4000, language: Language = resolveLanguage()): string {
+  const label = (key: string) => t(key, [], language);
   const facts = snapshotFacts(text);
   if (facts.parseError) {
-    return `Shop snapshot unreadable (${facts.parseError.slice(0, 200)}); raw prefix: ${text.slice(0, 400)}`;
+    return t("Shop snapshot unreadable ({0}); raw prefix: {1}", [facts.parseError.slice(0, 200), text.slice(0, 400)], language).slice(0, limit);
   }
   let document: any;
   try { document = JSON.parse(text); } catch { document = {}; }
   const lines: string[] = [];
   lines.push(`${facts.schema ?? "shop.snapshot/?"} · ${facts.phase ?? "unknown phase"} · run ${facts.runId ?? "unbound"}`
-    + ` · members ${facts.members} · attention ${facts.attention} (warn ${facts.warn}) · unknowns ${facts.unknowns}`);
+    + ` · ${label("members")} ${facts.members} · ${label("attention")} ${facts.attention} (${label("warn")} ${facts.warn}) · ${label("unknowns")} ${facts.unknowns}`);
   const events = document.events ?? {};
-  lines.push(`events: ${events.coverage ?? "unknown"} · revision ${events.revision ?? "-"}`
-    + ` · facts ${events.fact_count ?? 0}` + (events.reason ? ` · ${events.reason}` : ""));
+  lines.push(`${label("events")}: ${events.coverage ?? "unknown"} · ${label("revision")} ${events.revision ?? "-"}`
+    + ` · ${label("facts")} ${events.fact_count ?? 0}` + (events.reason ? ` · ${events.reason}` : ""));
   const transport = document.transport ?? {};
-  lines.push(`transport: ${transport.implemented ? "reported" : "unavailable"}`
-    + ` · pending ${transport.pending ?? 0} · unknown ${transport.unknown ?? 0}`
-    + ` · broker ${transport.broker?.live ? "live" : "not running"}`);
+  lines.push(`${label("transport")}: ${label(transport.implemented ? "reported" : "unavailable")}`
+    + ` · ${label("pending")} ${transport.pending ?? 0} · ${label("unknown")} ${transport.unknown ?? 0}`
+    + ` · ${label("broker")} ${label(transport.broker?.live ? "live" : "not running")}`);
   const handoff = document.handoff ?? {};
-  lines.push(`handoff: ${handoff.implemented ? "reported" : "unavailable"}`
-    + ` · open ${(handoff.open ?? []).length}`);
+  lines.push(`${label("handoff")}: ${label(handoff.implemented ? "reported" : "unavailable")}`
+    + ` · ${label("open")} ${(handoff.open ?? []).length}`);
   for (const member of document.members ?? []) {
     const observed = member.observed ?? {};
     lines.push(`  ${String(member.role ?? "?").padEnd(14)} ${String(observed.status ?? "?").padEnd(11)} `
@@ -103,10 +105,10 @@ export function summarizeSnapshot(text: string, limit = 4000): string {
   for (const entry of (document.attention ?? []).slice(0, 8)) {
     lines.push(`  [${entry.severity}] ${entry.code} ${entry.target ?? ""} — ${entry.detail ?? ""}`);
   }
-  if ((document.unknowns ?? []).length) lines.push(`unknowns: ${document.unknowns.slice(0, 4).join("; ")}`);
+  if ((document.unknowns ?? []).length) lines.push(`${label("unknowns")}: ${document.unknowns.slice(0, 4).join("; ")}`);
   const links = (document.links ?? []).filter((link: any) => link.focus).slice(0, 4);
   if (links.length) {
-    lines.push("locations (read-only focus commands):");
+    lines.push(label("locations (read-only focus commands):"));
     for (const link of links) lines.push(`  ${link.label}: ${link.focus.command.join(" ")} && ${link.focus.then.join(" ")}`);
   }
   return lines.join("\n").slice(0, limit);

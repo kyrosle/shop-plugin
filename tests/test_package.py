@@ -39,12 +39,14 @@ class PackageMetadataTests(unittest.TestCase):
     def test_files_allowlist_covers_runtime_assets_and_excludes_tests_runtime_and_secrets(self):
         files = self.package['files']
         for required in ('core', 'bin', 'extensions', 'transport', 'roles', 'config',
-                         'docs/ARCHITECTURE.md', 'docs/MIGRATION.md', 'docs/MODELS.md',
-                         'docs/WORKBENCH.md', 'docs/WORKFLOW.md',
+                         'locales/en.json', 'locales/zh-CN.json', 'README.zh-CN.md',
                          'herdr-plugin.toml', 'README.md', 'THIRD_PARTY.md', 'LICENSE',
                          'LICENSE.pi-intercom'):
             self.assertIn(required, files)
-        for forbidden in ('tests', '.shop', 'node_modules', 'runtime', 'sessions', 'docs'):
+        for language in ('en', 'zh-CN'):
+            for guide in ('ARCHITECTURE', 'MIGRATION', 'MODELS', 'WORKBENCH', 'WORKFLOW', 'LANGUAGE'):
+                self.assertIn(f'docs/{language}/{guide}.md', files)
+        for forbidden in ('tests', '.shop', 'node_modules', 'runtime', 'sessions', 'docs', 'locales'):
             self.assertNotIn(forbidden, files)
 
     def test_plugin_actions_include_user_action_shutdown_preview_and_recovery(self):
@@ -62,9 +64,9 @@ class PackageMetadataTests(unittest.TestCase):
 
     def test_attribution_and_migration_docs_exist(self):
         for name in ('THIRD_PARTY.md', 'LICENSE.pi-intercom', 'transport/NOTICE.md',
-                     'docs/MIGRATION.md', 'docs/ARCHITECTURE.md', 'docs/WORKFLOW.md', 'README.md'):
+                     'docs/en/MIGRATION.md', 'docs/en/ARCHITECTURE.md', 'docs/en/WORKFLOW.md', 'README.md'):
             self.assertTrue((ROOT / name).is_file(), name)
-        workflow = (ROOT / 'docs/WORKFLOW.md').read_text()
+        workflow = (ROOT / 'docs/en/WORKFLOW.md').read_text()
         self.assertTrue('shutdown' in workflow.lower() or '收工' in workflow)
 
 
@@ -81,12 +83,20 @@ class TarballAuditTests(unittest.TestCase):
             self.assertIn('core/shutdown.py', names)
             self.assertIn('core/workbench.py', names)
             self.assertIn('extensions/workbench-ui.ts', names)
-            self.assertIn('docs/WORKBENCH.md', names)
+            self.assertIn('core/language.py', names)
+            for language in ('en', 'zh-CN'):
+                self.assertIn(f'locales/{language}.json', names)
+                for guide in ('ARCHITECTURE', 'MIGRATION', 'MODELS', 'WORKBENCH', 'WORKFLOW', 'LANGUAGE'):
+                    self.assertIn(f'docs/{language}/{guide}.md', names)
+            self.assertIn('README.zh-CN.md', names)
             self.assertNotIn('sync', names)
             self.assertIn('bin/herdr-shop', names)
             self.assertIn('LICENSE.pi-intercom', names)
-            self.assertIn('docs/MIGRATION.md', names)
+            self.assertIn('docs/en/MIGRATION.md', names)
             for name in names:
+                if name.startswith('docs/'):
+                    self.assertFalse(Path(name).name.startswith(('PLAN-', 'SPEC-')))
+                    self.assertNotIn(Path(name).name, ('REFERENCE-ANALYSIS.md', 'PUBLISHING.md'))
                 for forbidden in FORBIDDEN_IN_TARBALL:
                     self.assertNotIn(forbidden, name, name)
             for entry in payload['files']:

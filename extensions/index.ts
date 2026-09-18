@@ -1,3 +1,5 @@
+import { t } from "./i18n.js";
+import { registerLanguageCommand } from "./language-ui.js";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { readFileSync, existsSync } from "node:fs";
@@ -13,11 +15,12 @@ import { workbenchUI, submitPrepared, workbenchClient } from "./workbench-ui.js"
 /** No generic interception, session replay, model calls, or automatic dispatch. */
 export default function shopMode(pi: ExtensionAPI) {
   if (process.env.HERDR_ENV !== "1") return;
+  registerLanguageCommand(pi);
   const configPublisher = new ConfigPublisher(pi);
-  pi.registerCommand("shop-ui", { description: "Shop 工作台：状态、接手、开发、交付、配置与干预", handler: async (_args, ctx) => {
+  pi.registerCommand("shop-ui", { description: "Shop workbench / 工作台：status, handoffs, development, delivery, configuration", handler: async (_args, ctx) => {
     try { await workbenchUI(pi, ctx); } catch (error) { ctx.ui.notify(String(error), "error"); }
   } });
-  pi.registerCommand("shop-config", { description: "Shop 全局/目录/会话配置；保存不修改在途工位", handler: async (args, ctx) => {
+  pi.registerCommand("shop-config", { description: "Shop settings / 全局、目录、会话配置；existing Shops unchanged", handler: async (args, ctx) => {
     try {
       await configPublisher.start(ctx);
       await editConfiguration(pi, ctx, configPublisher, args.trim());
@@ -39,9 +42,9 @@ export default function shopMode(pi: ExtensionAPI) {
     const mode = bridge ? readMode(process.env, bridge.state_dir, ctx.cwd) : { kind: "off" as const, token: "off" };
     if (mode.kind !== "off") everEnabled = true;
     if (ctx.hasUI) ctx.ui.setStatus("shop-workstation", mode.kind === "architect"
-      ? `SHOP ready · /shop 委托 · ${mode.state.run_id ?? "unbound"}`
+      ? t("SHOP ready · /shop delegate · {0}", [mode.state.run_id ?? "unbound"])
         + (lastSnapshot.attention ? ` · ⚠${lastSnapshot.attention}` : "")
-      : mode.kind === "blocked" ? "SHOP blocked · inspect state" : undefined);
+      : mode.kind === "blocked" ? t("SHOP blocked · inspect state") : undefined);
     return { bridge, mode };
   };
   pi.on("session_start", (_event, ctx) => {
@@ -57,7 +60,7 @@ export default function shopMode(pi: ExtensionAPI) {
         void reconcileShopTransport(pi, ctx).catch(() => {}).finally(() => { reconciling = false; });
       }
       try { refresh(ctx); }
-      catch { if (ctx.hasUI) ctx.ui.setStatus("shop-workstation", "SHOP bridge error"); }
+      catch { if (ctx.hasUI) ctx.ui.setStatus("shop-workstation", t("SHOP bridge error")); }
     };
     tick();
     timer = setInterval(tick, 1000);
@@ -65,7 +68,7 @@ export default function shopMode(pi: ExtensionAPI) {
     // Built-in transport: connect once per session. The factory never starts
     // resources, and a missing/incomplete identity simply leaves it off.
     void startShopTransport(pi, ctx).catch((error) => {
-      if (ctx.hasUI) ctx.ui.setStatus("shop-transport", `transport error: ${String(error).slice(0, 120)}`);
+      if (ctx.hasUI) ctx.ui.setStatus("shop-transport", t("Transport error: {0}", [String(error).slice(0, 120)]));
     });
   });
   pi.on("session_shutdown", (_event, ctx) => {
@@ -79,12 +82,12 @@ export default function shopMode(pi: ExtensionAPI) {
       ctx.ui.setStatus("shop-transport", undefined);
     }
   });
-  pi.registerCommand("shop", { description: "Delegate this request to existing Shop; ordinary messages stay local", handler: async (args, ctx) => {
-    if (!args.trim()) { ctx.ui.notify("用法：/shop 分析整个流程。普通消息不派工。", "info"); return; }
-    if (!ctx.isIdle() || pending) { ctx.ui.notify("当前回合尚未结束；先等待或中断，再提交 /shop。未派送。", "warning"); return; }
+  pi.registerCommand("shop", { description: "Delegate this request to Shop / 仅本次委托；ordinary messages stay local", handler: async (args, ctx) => {
+    if (!args.trim()) { ctx.ui.notify(t("Usage: /shop analyze the workflow. Ordinary messages do not dispatch."), "info"); return; }
+    if (!ctx.isIdle() || pending) { ctx.ui.notify(t("Current turn unfinished; wait or interrupt before /shop. Nothing dispatched."), "warning"); return; }
     const { bridge, mode } = refresh(ctx);
     if (!bridge || mode.kind !== "architect") {
-      ctx.ui.notify("请先在当前主 Pi 中按 Ctrl+B → U 开好工位；异常登记先修复。不自动创建其他工位。", "warning"); return;
+      ctx.ui.notify(t("Open Shop from the primary Pi with Ctrl+B → U first; repair invalid registration. No other Shops are created automatically."), "warning"); return;
     }
     const prompt = `[Explicit /shop request ${randomUUID()}]\n${args.trim()}`;
     pending = { prompt, token: mode.token };
@@ -101,7 +104,7 @@ export default function shopMode(pi: ExtensionAPI) {
     if (explicit && mode.kind === "architect" && bridge) {
       const override = join(bridge.config_dir, "roles/architect.md");
       role = readFileSync(existsSync(override) ? override : join(bridge.core_root, "roles/architect.md"), "utf8")
-        .replaceAll("{{WORKFLOW}}", join(bridge.core_root, "docs/WORKFLOW.md"));
+        .replaceAll("{{WORKFLOW}}", join(bridge.core_root, "docs/en/WORKFLOW.md"));
       role += `\nPackage CLI paths: ${join(bridge.core_root, "bin/herdr-shop")} ; ${join(bridge.core_root, "bin/shop-run")}. Do not use legacy global wrappers.`;
     }
     const extra = instructions(mode, role, everEnabled, explicit);
@@ -123,7 +126,7 @@ export default function shopMode(pi: ExtensionAPI) {
     const text = result.stdout.length > 20000 ? result.stdout.slice(0, 20000) + "\n[Truncated; inspect state/report files for full output]" : result.stdout;
     return { content: [{ type: "text" as const, text }], details: {} };
   };
-  pi.registerCommand("shop-status", { description: "Show current Shop status", handler: async (_args, ctx) => {
+  pi.registerCommand("shop-status", { description: "Show current Shop status / 查看状态", handler: async (_args, ctx) => {
     const result = await call(["status"]);
     const facts = snapshotFacts(result.content[0].text);
     lastSnapshot = { attention: facts.attention, warn: facts.warn, schema: facts.schema ?? "shop.snapshot/v1" };

@@ -92,4 +92,4 @@ def resolve_models(data):
 def role_text(role):
     override = CONFIG / 'roles' / (role + '.md')
     text = (override if override.exists() else PACKAGE / 'roles' / (role + '.md')).read_text()
-    return text.replace('{{WORKFLOW}}', str(PACKAGE / 'docs/WORKFLOW.md'))
+    return text.replace('{{WORKFLOW}}', str(PACKAGE / 'docs/en/WORKFLOW.md'))

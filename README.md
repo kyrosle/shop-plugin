@@ -1,5 +1,7 @@
 # Pi + Herdr Shop
 
+English · [简体中文](README.zh-CN.md)
+
 **Local alpha. One repository, two plugin entrypoints, one authoritative Python core.**
 Visible independent Pi processes; file-ticket handoff; primary Lead owns dispatch and review.
 No Pi subprocess orchestration framework, conversation cloning, daemon scheduler, or generic tool interception.
@@ -9,7 +11,7 @@ No Pi subprocess orchestration framework, conversation cloning, daemon scheduler
 Implemented:
 - Herdr manifest actions: open, close, status, recovery report, doctor.
 - Pi package: explicit per-request `/shop <task>` delegation (ordinary messages stay single-agent), `shop_status`, `shop_patrol`, `shop_dispatch`, `shop_message`, `shop_handoff`; `/shop-status` for manual inspection.
-- `/shop-ui`: read-only dashboard, exact-recipient handoff receipts, new-worktree preparation, delivery/ff-only integration plans, idle-seat model requests, scope/pause/cancel controls, and allowlisted diagnostic export. See [workbench guide](docs/WORKBENCH.md).
+- `/shop-ui`: read-only dashboard, exact-recipient handoff receipts, new-worktree preparation, delivery/ff-only integration plans, idle-seat model requests, scope/pause/cancel controls, and allowlisted diagnostic export. See [workbench guide](docs/en/WORKBENCH.md).
 - `/shop-config`: global/trusted-directory/session model and thinking settings; explicit legacy migration, CAS saves, and Pi-to-Herdr configuration candidates. Existing shops retain pinned launch profiles. Controlled live acceptance remains pending.
 - Existing ticket/binding/checkpoint/review/retry/cleanup core and regression tests.
 - Observed member health across workspaces: present, missing, moved, mismatched, unknown.
@@ -56,7 +58,7 @@ When invoked within a Herdr plugin context, configure can use its plugin config/
 After loading the extension, use `/shop-config` in Herdr Pi to configure global, trusted-directory or
 session model/thinking overrides. Each execution seat can use a different profile. Existing
 `models.json` can be explicitly imported with `/shop-config migrate`; there is no automatic overwrite.
-See the [configuration guide](docs/MODELS.md) for precedence, inheritance and migration.
+See the [configuration guide](docs/en/MODELS.md) for precedence, inheritance and migration.
 Architect stays in the existing Pi session: select its model with `/model` and thinking with `/thinking`.
 Shop never resets that session or changes its model automatically.
 
@@ -89,6 +91,13 @@ Herdr client configuration; install/configure on server running panes. Native pl
 Use explicit `bin/herdr-shop` and `bin/shop-run` paths from this checkout; no global wrappers are overwritten.
 If needed, set `SHOP_HERDR_BIN` to compatible executable. Herdr actions normally use injected `HERDR_BIN_PATH`.
 
+## Language
+
+Use `/shop-language` to select English, 简体中文 or automatic system detection.
+Explicit commands: `/shop-language en`, `/shop-language zh-CN`, `/shop-language auto`.
+CLI: `bin/herdr-shop language [auto|zh-CN|en]`. Personal language preferences are separate
+from model configuration and never modify running Shops. See [language guide](docs/en/LANGUAGE.md).
+
 ## Safety and recovery
 
 Plugins execute as your OS user, not in a sandbox. Review code before installation.
@@ -105,7 +114,7 @@ File locks/identity checks govern Shop-specific operations, not arbitrary shell 
 - Active run blocks teardown/cleanup; finish tickets and unbind explicitly.
 - No automatic model wakeups. Lead patrol only runs during its active turn.
 
-See [workflow](docs/WORKFLOW.md), [architecture](docs/ARCHITECTURE.md), [migration](docs/MIGRATION.md).
+See [workflow](docs/en/WORKFLOW.md), [architecture](docs/en/ARCHITECTURE.md), [migration](docs/en/MIGRATION.md).
 
 ## Distribution and licensing
 
@@ -148,8 +157,8 @@ deletes anything; every apply path is a separate explicit user action.
 
 Packaging: `package.json` keeps `private: true`, mirrors the manifest version
 `0.1.0-alpha.1`, declares `engines.node >= 22.19.0`, and ships an allowlist
-(extensions, transport, core, bin, roles, docs, config, manifest, README,
+(extensions, transport, core, bin, roles, explicit bilingual docs/locales, config, manifest, READMEs,
 THIRD_PARTY.md, LICENSE, LICENSE.pi-intercom). `LICENSE` records that the
 project license is **pending** — do not publish before the owner decides.
-Migration/cutover/rollback: see `docs/MIGRATION.md`; architecture: see
-`docs/ARCHITECTURE.md`.
+Migration/cutover/rollback: see `docs/en/MIGRATION.md`; architecture: see
+`docs/en/ARCHITECTURE.md`.

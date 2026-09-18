@@ -13,7 +13,7 @@ prints the decision JSON (inject / duplicate / reject). The caller must not
 inject when the decision is not `inject`, and must never re-inject `received`
 or `unknown` records.
 """
-import argparse
+from language import ArgumentParser, t
 import json
 import sys
 
@@ -28,16 +28,16 @@ def emit(value, code=0):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--repo', required=True, help='Main repository root (absolute)')
-    parser.add_argument('--run', required=True, help='Bound run id')
+    parser = ArgumentParser(description=t(__doc__))
+    parser.add_argument('--repo', required=True, help=t('Main repository root (absolute)'))
+    parser.add_argument('--run', required=True, help=t('Bound run id'))
     sub = parser.add_subparsers(dest='command', required=True)
 
     receive = sub.add_parser('receive')
-    receive.add_argument('--state', required=True, help='Workstation state JSON file')
-    receive.add_argument('--self', required=True, help='Receiving member name')
-    receive.add_argument('--self-pane', default=None, help='Receiving pane id for cross-check')
-    receive.add_argument('--file', required=True, help='Business envelope JSON file')
+    receive.add_argument('--state', required=True, help=t('Workstation state JSON file'))
+    receive.add_argument('--self', required=True, help=t('Receiving member name'))
+    receive.add_argument('--self-pane', default=None, help=t('Receiving pane id for cross-check'))
+    receive.add_argument('--file', required=True, help=t('Business envelope JSON file'))
 
     receipt = sub.add_parser('receipt')
     receipt.add_argument('--message-id', required=True)

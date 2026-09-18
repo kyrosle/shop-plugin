@@ -1,5 +1,7 @@
 # Legacy migration policy
 
+[简体中文](../zh-CN/MIGRATION.md) · [README](../../README.md)
+
 This alpha does not migrate or replace installed workstation scripts.
 Keep legacy shortcuts and Pi extension enabled until choosing a controlled cutover.
 Never enable both old and new mode extensions for same Pi session.
@@ -32,8 +34,8 @@ Before cutover:
   the Herdr plugin link, keybindings, the Shop transport broker/socket/lock and
   any original `pi-intercom` instance.
 - Refuse cutover on an active run, an unknown writer or a partial operation;
-  active-run migration is unsupported and must stay manual.
-- Preview every config/file change and back up bridge, model/role config, Herdr
+  active-run migration is unsupported; settle and unbind before cutover, never move active state by editing JSON.
+- Preview every config/file change and back up bridge, model/role config, language preference, Herdr
   keybindings, prior plugin references and version metadata outside the repo.
 - Never modify installed `pi-intercom`, take over its socket, treat an unlink as
   a stopped process, or enable two Shop role extensions at once.
@@ -60,3 +62,10 @@ Shutdown integration: `Shift+U` now runs the independent user-action shutdown
 the documented order stays: settle tickets → explicit unbind → user shutdown.
 `core/shop.py shutdown --preview` is read-only diagnosis; execution needs Herdr
 plugin-action context.
+
+## Language preferences
+
+Display language lives in a separate `<bridge.config_dir>/language.json`. It needs
+no model-settings migration and never restarts or reconfigures existing Shops.
+Older versions may ignore it. Preserve it during rollback; do not merge it into
+settings.json or runtime registration. See [language](LANGUAGE.md).

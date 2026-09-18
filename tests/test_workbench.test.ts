@@ -3,6 +3,8 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
+import { t, type Language } from "../extensions/i18n.ts";
+import { visibleWidth } from "@earendil-works/pi-tui";
 import { workbenchClient, workbenchUI, submitPrepared } from "../extensions/workbench-ui.ts";
 import { startShopTransport, stopShopTransport, sendShopEnvelope, handleInboundMessage } from "../extensions/transport.ts";
 import { publishEndpoint, readEndpoint, endpointPath } from "../extensions/endpoints.ts";
@@ -19,7 +21,7 @@ let sid: string;
 beforeEach(() => {
   original = { ...process.env };
   root = mkdtempSync(join(tmpdir(), "shop-workbench-ui-"));
-  Object.assign(process.env, { HERDR_ENV: "1", HERDR_PANE_ID: "p1", HERDR_TAB_ID: "t1",
+  Object.assign(process.env, { LC_ALL: "en_US.UTF-8", HERDR_ENV: "1", HERDR_PANE_ID: "p1", HERDR_TAB_ID: "t1",
     HERDR_SOCKET_PATH: "/tmp/shop-test-only", SHOP_LOCATOR: join(root, "bridge.json") });
   writeFileSync(process.env.SHOP_LOCATOR!, JSON.stringify({ protocol: 1, core_root: join(root, "package"),
     state_dir: root, config_dir: join(root, "config") }));
@@ -33,7 +35,7 @@ beforeEach(() => {
   calls = [];
   sid = "session1";
   ctx = { hasUI: true, isIdle: () => true, sessionManager: { getSessionId: () => sid },
-    ui: { setStatus() {}, notify() {}, select: async () => "退出" } };
+    ui: { setStatus() {}, notify() {}, select: async (_title: string, choices: string[]) => choices.at(-1) } };
   pi = { exec: async (_command: string, args: string[]) => {
     calls.push(args);
     return { code: 0, stdout: JSON.stringify({ actor: "architect", snapshot: { shop: state, members: [] },
@@ -138,3 +140,64 @@ test("wire/body sender mismatch rejected before Python or model injection", asyn
   expect(receipts[0].status).toBe("rejected");
   expect(calls).toEqual([]);
 });
+
+const routes = [
+  { menu: "Status and identity", choices: [], inputs: [], actions: [] },
+  { menu: "Propose handoff", choices: ["lead"], inputs: ["目标 original", "scope", "checks", ""], actions: ["handoff-propose"] },
+  { menu: "Development preparation", choices: [], inputs: ["/tmp/new-worktree", "new-branch", ""], actions: ["development-preview", "development-create"] },
+  { menu: "Delivery and integration", choices: ["Preview integration"], inputs: ["T001"], actions: ["delivery", "integration-preview", "integrate"] },
+  { menu: "Idle-seat configuration", choices: ["lead", "p/model", "high"], inputs: [], actions: ["profile-request"] },
+  { menu: "Task intervention", choices: ["Request pause (pause)"], inputs: ["原因 original", "T001"], actions: ["intervention-request"] },
+  { menu: "Inbox and receipts", choices: ["h1 · handoff · proposed", "Accept (accept)"], inputs: ["说明 original"], actions: ["handoff-transition"] },
+  { menu: "Diagnostics and redacted export", choices: [], inputs: [], actions: ["diagnostics"], confirm: false },
+  { menu: "Propose handoff", choices: ["lead"], inputs: ["objective", "scope", "checks", ""], actions: [], confirm: false },
+  { menu: "Development preparation", choices: [], inputs: ["/tmp/new-worktree", "new-branch", ""], actions: ["development-preview"], confirm: false },
+  { menu: "Delivery and integration", choices: ["Preview integration"], inputs: ["T001"], actions: ["delivery", "integration-preview"], confirm: false },
+];
+for (const language of ["en", "zh-CN"] as Language[]) for (const route of routes) {
+  test(`${language} UI ${route.menu} (${route.confirm === false ? "cancel" : "confirm"}) uses canonical operations`, async () => {
+    mkdirSync(join(root, "config"));
+    writeFileSync(join(root, "config/language.json"), JSON.stringify({ version: 1, language }));
+    const choices = [route.menu, ...route.choices, "Exit"].map(key => t(key, [], language));
+    const inputs = [...route.inputs];
+    const requests: any[] = [];
+    pi.exec = async (_binary: string, args: string[]) => {
+      const request = JSON.parse(args[args.indexOf("--request") + 1]);
+      requests.push(request);
+      const data = request.action === "view" ? { actor: "architect", snapshot: { shop: state, members: [{ name: "lead" }] },
+        records: [{ id: "h1", kind: "handoff", status: "proposed", recipient: { name: "architect" } }], handoffs: [], models: {} }
+        : { id: "plan-1", target_commit: "commit-original", status: "requested" };
+      return { code: 0, stdout: JSON.stringify(data), stderr: "" };
+    };
+    ctx.modelRegistry = { getAvailable: () => [{ provider: "p", id: "model", reasoning: true }] };
+    const notices: string[] = [];
+    ctx.ui.notify = (text: string) => notices.push(text);
+    ctx.ui.select = async (_title: string, options: string[]) => {
+      const choice = choices.shift();
+      if (choice === undefined) throw new Error("Unexpected extra menu");
+      expect(options).toContain(choice);
+      return choice;
+    };
+    ctx.ui.input = async () => inputs.shift();
+    ctx.ui.confirm = async () => route.confirm !== false;
+    ctx.ui.custom = async (factory: any) => {
+      const panel = factory({ terminal: { rows: 24 }, requestRender() {} }, { fg: (_style: string, text: string) => text }, {}, () => {});
+      for (const width of [4, 12, 40]) for (const line of panel.render(width)) expect(visibleWidth(line)).toBeLessThanOrEqual(width);
+      panel.handleInput("\x1b");
+    };
+    await workbenchUI(pi, ctx);
+    expect(choices).toHaveLength(0);
+    expect(inputs).toHaveLength(0);
+    expect(notices).toEqual([]);
+    const operations = requests.filter(r => r.action !== "view");
+    expect(operations.map(r => r.action)).toEqual(route.actions);
+    for (const request of operations) {
+      expect(request.expected).toEqual({ shop_id: "s1", run_id: "r1", actor: "architect", launch_id: "a1", session_id: "session1" });
+      if (request.action === "handoff-propose") expect(request.objective).toBe("目标 original");
+      if (request.action === "handoff-transition") expect(request.transition).toBe("accept");
+      if (request.action === "intervention-request") { expect(request.kind).toBe("pause"); expect(request.text).toBe("原因 original"); }
+      if (request.action === "integrate") expect(request.writers_stopped).toBe(true);
+      if (request.action === "profile-request") expect(request.profile).toEqual({ model: "p/model", thinking: "high" });
+    }
+  });
+}

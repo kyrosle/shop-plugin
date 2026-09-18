@@ -1,6 +1,10 @@
 # Shop task workflow
 
+[简体中文](../zh-CN/WORKFLOW.md) · [README](../../README.md)
+
 Commands are deterministic wrappers around files/Herdr, not an async agent framework. JSON is authoritative; Markdown supplies spec, plan, human-readable status/review. Tools cannot prove semantic completion, prevent arbitrary shell writes, or atomically freeze a human typing in another pane.
+
+Reply language follows the user's request, not Shop display language. Do not automatically translate source code, paths or evidence.
 
 ## 1. Fixed workstation/run binding
 
@@ -23,7 +27,7 @@ Analysis may explicitly read current dirty source from main repository while pro
 
 ## 3. Sessions and checkpoints
 
-New Sol/DS launches now save fresh sessions under `<state_dir>/runtime/sessions/<shop-id>/<launch-id>/` via `--session-dir`. No --continue, --fork, --resume or parent transcript replay. Closing pane does not delete session. Bound run gets session-refs/*.json; actual sessions remain machine-local. Previous --no-session instances cannot be retroactively recovered.
+New Sol/DS launches now save fresh sessions under `<state_dir>/runtime/sessions/<shop-id>/<member-name>-<launch-id>/` via `--session-dir`. No --continue, --fork, --resume or parent transcript replay. Closing pane does not delete session. Bound run gets session-refs/*.json; actual sessions remain machine-local. Previous --no-session instances cannot be retroactively recovered.
 
 Worker publishes checkpoint at each meaningful phase / before long work. It is one atomically replaced checkpoint per attempt, not token-by-token logging. Publishing is explicit, no background timer. On crash, latest saved checkpoint is available; unsaved last segment can still be lost. Pi-native session recovery is optional manual rescue, not normal handoff. Session directories are deliberately NOT deleted by gc: they may be referenced by multiple runs if seats were rebound. After verification, inspect refs and active agents before explicit manual session cleanup.
 
@@ -206,4 +210,4 @@ mixed-survivor layouts. It classifies each member and lists display-only
 actions; it never restores, reassigns, replays, closes or deletes. Applying a
 restore now requires a matching, non-stale recovery plan and stays an explicit
 Architect action with its own dry-run and archive. Cutover/rollback rules:
-`docs/MIGRATION.md`.
+[Migration](MIGRATION.md).

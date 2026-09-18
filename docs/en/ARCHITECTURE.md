@@ -1,5 +1,7 @@
 # Architecture
 
+[简体中文](../zh-CN/ARCHITECTURE.md) · [README](../../README.md)
+
 Shop has two plugin entrypoints and one authoritative Python core. Herdr manages visible
 Pi processes; Pi supplies role guidance, tools and interactive controls. Neither entrypoint
 is a permanent task scheduler.
@@ -12,6 +14,7 @@ is a permanent task scheduler.
 | `extensions/index.ts`, `state.ts` | Explicit `/shop` delegation, scoped tools and compact status rendering |
 | `extensions/settings-ui.ts`, `configuration.ts` | Configuration UI, Pi custom entries and short-lived startup candidates |
 | `extensions/workbench-ui.ts` | Read-only dashboard and explicitly confirmed business actions |
+| `extensions/i18n.ts`, `language-ui.ts`, `core/language.py`, `locales/` | Shared English/Chinese catalogues, personal language preference and stable selection IDs |
 | `extensions/transport.ts`, `endpoints.ts` | Pi transport lifecycle, ephemeral endpoint advertisements and validated message injection |
 | `core/shop.py`, `run.py`, `coordination.py` | Seat setup, run binding, explicit dispatch and ticket coordination |
 | `core/herdr.py`, `identity.py` | Typed Herdr adapter and fail-closed member authorization |
@@ -108,6 +111,10 @@ A separate idle-seat request requires confirmation in the receiving Pi. Applying
 unknown profile changes block dispatch until completion or explicit inspection.
 Architect remains on native `/model` and `/thinking` controls.
 
+Display language uses a separate `language.json`, never these configuration layers or
+Shop snapshots. Translations affect labels only; protocol, raw evidence and user content
+stay unchanged. See [language](LANGUAGE.md).
+
 ## Git operations and intervention
 
 Development preparation creates a new isolated branch/worktree only after preview and
@@ -144,5 +151,5 @@ They validate mechanisms and contracts, not real model understanding or output q
 Actual providers, Pi UI behavior, Herdr lifecycle and background-writer safety require
 controlled validation in an isolated environment before use with active projects.
 
-Third-party origins and licenses are documented in `../THIRD_PARTY.md` and
-`../transport/NOTICE.md`; source attribution must remain intact.
+Third-party origins and licenses are documented in [third-party notices](../../THIRD_PARTY.md) and
+[transport attribution](../../transport/NOTICE.md); source attribution must remain intact.

@@ -7,43 +7,43 @@ platforms = ["macos", "linux"]
 
 [[actions]]
 id = "open"
-title = "Open or restore Shop"
+title = "Open or restore Shop · 开工/恢复"
 contexts = ["workspace"]
 command = ["python3", "core/plugin.py", "open"]
 
 [[actions]]
 id = "close"
-title = "Shut down Shop (user action · preview + verified close)"
+title = "Shut down Shop (preview + verified close) · 收工（预览并核验关闭）"
 contexts = ["workspace"]
 command = ["python3", "core/plugin.py", "close"]
 
 [[actions]]
 id = "shutdown-preview"
-title = "Preview Shop shutdown (no close)"
+title = "Preview shutdown (no close) · 收工预览（不关闭）"
 contexts = ["workspace"]
 command = ["python3", "core/shop.py", "shutdown", "--preview"]
 
 [[actions]]
 id = "recovery"
-title = "Recovery/reconciliation plan (read-only)"
+title = "Recovery plan (read-only) · 恢复计划（只读）"
 contexts = ["workspace"]
 command = ["python3", "core/shop.py", "recovery"]
 
 [[actions]]
 id = "status"
-title = "Inspect Shop (plugin log)"
+title = "Inspect Shop (plugin log) · 查看状态（插件日志）"
 contexts = ["workspace"]
 command = ["python3", "core/plugin.py", "status"]
 
 [[actions]]
 id = "recover"
-title = "Write recovery report (no restart)"
+title = "Recovery report (no restart) · 恢复报告（不重启）"
 contexts = ["workspace"]
 command = ["python3", "core/plugin.py", "recover"]
 
 [[actions]]
 id = "doctor"
-title = "Check Shop environment (plugin log)"
+title = "Check environment (plugin log) · 环境检查（插件日志）"
 contexts = ["workspace"]
 command = ["python3", "core/plugin.py", "doctor"]
 

@@ -1,5 +1,9 @@
 # Shop 配置：全局、目录、会话
 
+[English](../en/MODELS.md) · [README](../../README.zh-CN.md)
+
+界面语言是独立个人偏好，不属于模型配置层，见[语言](LANGUAGE.md)。
+
 本文介绍 `/shop-config` 的配置层、继承、保存与迁移。当前空闲席位的显式配置申请见[工作台指南](WORKBENCH.md)。
 
 ## Pi 设置入口

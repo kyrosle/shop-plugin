@@ -19,3 +19,7 @@ dist/
 /docs/SPEC-*.md
 /docs/REFERENCE-ANALYSIS.md
 /docs/PUBLISHING.md
+/docs/**/PLAN-*.md
+/docs/**/SPEC-*.md
+/docs/**/REFERENCE-ANALYSIS.md
+/docs/**/PUBLISHING.md
