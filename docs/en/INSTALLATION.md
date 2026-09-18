@@ -46,15 +46,23 @@ herdr plugin install kyrosle/shop-plugin --ref "$SHOP_REF" --yes
 
 `--yes` accepts Herdr's install confirmation; it does not start a Shop. Pi installs package dependencies automatically. Do not run `npm ci` inside managed installs or patch their files to work around errors.
 
-Keep the `plugin_root` printed by Herdr's installer. Its directory name is managed by Herdr; do not guess its suffix.
+Herdr's CLI shows the plugin identity and configuration directory, but may omit its code checkout path. Read `plugin_root` from its local registry as below; do not guess the directory suffix or confuse the configuration directory with the code directory.
 The default global Pi checkout is `~/.pi/agent/git/github.com/kyrosle/shop-plugin`.
 
 ## 3. Configure the shared bridge — first installation only
 
-Replace the path below with the installer-reported `plugin_root`. Preview before applying:
+For the default Herdr profile, read its registry without modifying it. If you use a custom profile/configuration root, use that profile's registry path instead. Preview before applying:
 
 ```sh
-SHOP_CORE='/absolute/plugin_root/from-herdr-install-output'
+SHOP_CORE="$(python3 - <<'PY'
+import json
+from pathlib import Path
+plugins = json.loads((Path.home() / '.config/herdr/plugins.json').read_text())
+matches = [p for p in plugins if p['plugin_id'] == 'shop.workstation']
+assert len(matches) == 1, 'Expected exactly one Shop plugin registration'
+print(matches[0]['plugin_root'])
+PY
+)"
 SHOP_CONFIG="$(herdr plugin config-dir shop.workstation)"
 SHOP_STATE="$HOME/.local/state/shop-workstation"
 

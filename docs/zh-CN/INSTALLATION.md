@@ -46,15 +46,23 @@ herdr plugin install kyrosle/shop-plugin --ref "$SHOP_REF" --yes
 
 `--yes` 仅接受 Herdr 安装确认，不会开工。Pi 自动安装包依赖；不要在托管安装目录运行 `npm ci`，也不要手改安装文件绕过报错。
 
-记下 Herdr 安装结果中的 `plugin_root`。该目录由 Herdr 管理，不要猜目录后缀。
+Herdr CLI 显示插件身份与配置目录，但可能不显示代码 checkout 路径。按下文从本地登记文件读取 `plugin_root`，不要猜目录后缀，也不要把配置目录当作代码目录。
 Pi 默认全局 checkout 在 `~/.pi/agent/git/github.com/kyrosle/shop-plugin`。
 
 ## 3. 配共享 bridge——仅首次安装
 
-把下面路径换成安装结果中的 `plugin_root`，先预览再应用：
+默认 Herdr profile 可只读查询登记文件；自定义 profile/配置根目录时，改用对应的登记文件路径。先预览再应用：
 
 ```sh
-SHOP_CORE='/absolute/plugin_root/from-herdr-install-output'
+SHOP_CORE="$(python3 - <<'PY'
+import json
+from pathlib import Path
+plugins = json.loads((Path.home() / '.config/herdr/plugins.json').read_text())
+matches = [p for p in plugins if p['plugin_id'] == 'shop.workstation']
+assert len(matches) == 1, 'Expected exactly one Shop plugin registration'
+print(matches[0]['plugin_root'])
+PY
+)"
 SHOP_CONFIG="$(herdr plugin config-dir shop.workstation)"
 SHOP_STATE="$HOME/.local/state/shop-workstation"
 
