@@ -99,6 +99,45 @@ class FixtureTests(unittest.TestCase):
         self.assertIsNone(parsed.get('name'))
         self.assertTrue(parsed['pane_id'])
 
+    def test_agent_screen_detection_metadata_is_optional_and_strictly_boolean(self):
+        original = fixture('agent-get.json')['result']['agent']
+        self.assertNotIn('screen_detection_skipped', herdr.agent_record(original))
+        for value in (True, False):
+            parsed = herdr.agent_record(dict(original, screen_detection_skipped=value))
+            self.assertIs(parsed.pop('screen_detection_skipped'), value)
+            self.assertEqual(parsed, herdr.agent_record(original))
+        for value in (None, 0, 1, 'true', [], {}):
+            with self.subTest(value=value), self.assertRaises(herdr.HerdrSchemaError):
+                herdr.agent_record(dict(original, screen_detection_skipped=value))
+
+    def test_screen_detection_metadata_does_not_grant_identity_or_idle_status(self):
+        record = fixture('agent-list-unnamed.json')['result']['agents'][0]
+        parsed = herdr.agent_record(dict(record, screen_detection_skipped=True))
+        self.assertNotIn('name', parsed)
+        parsed.pop('agent_status', None)
+        with self.assertRaises(herdr.HerdrIdentityError):
+            herdr.require_status(parsed)
+        parsed['agent_status'] = 'unknown'
+        with self.assertRaises(herdr.HerdrIdentityError):
+            herdr.require_status(parsed, allowed=('idle', 'done'))
+        with self.assertRaises(herdr.HerdrSchemaError):
+            herdr.agent_record(dict(record, screen_detection_skipped=True, unrelated_field=True))
+
+    def test_agent_get_and_list_accept_screen_detection_metadata(self):
+        for command, filename, key in [('get', 'agent-get.json', 'agent'),
+                                        ('list', 'agent-list.json', 'agents')]:
+            with self.subTest(command=command):
+                document = fixture(filename)
+                rows = [document['result'][key]] if command == 'get' else document['result'][key]
+                for row in rows:
+                    row['screen_detection_skipped'] = True
+                args = ('agent', 'get', 'demo-pane') if command == 'get' else ('agent', 'list')
+                result = adapter({args: (0, json.dumps(document), '')}).call(*args)
+                actual = [result[key]] if command == 'get' else result[key]
+                self.assertTrue(actual)
+                for row in actual:
+                    self.assertIs(row['screen_detection_skipped'], True)
+
     def test_pane_payload_has_no_authoritative_name(self):
         pane = fixture('pane-get.json')['result']['pane']
         self.assertNotIn('name', pane)

@@ -86,7 +86,9 @@ PANE_SPEC = {
 # dropped: only the agent endpoint may supply an agent name.
 AGENT_ONLY_KEYS = frozenset({'name'})
 PANE_IGNORED_KEYS = AGENT_ONLY_KEYS
-AGENT_SPEC = dict(PANE_SPEC, name=_OPTIONAL_STR)
+# Optional observation metadata from Herdr's agent endpoints. It does not
+# establish identity or imply any particular agent_status.
+AGENT_SPEC = dict(PANE_SPEC, name=_OPTIONAL_STR, screen_detection_skipped=bool)
 SESSION_SPEC = {'source': str, 'agent': str, 'kind': str, 'value': str}
 SCROLL_SPEC = {'max_offset_from_bottom': int, 'offset_from_bottom': int, 'viewport_rows': int}
 LAYOUT_AREA_SPEC = {'x': int, 'y': int, 'width': int, 'height': int}

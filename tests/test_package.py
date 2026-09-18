@@ -44,7 +44,7 @@ class PackageMetadataTests(unittest.TestCase):
                          'LICENSE.pi-intercom'):
             self.assertIn(required, files)
         for language in ('en', 'zh-CN'):
-            for guide in ('ARCHITECTURE', 'MIGRATION', 'MODELS', 'WORKBENCH', 'WORKFLOW', 'LANGUAGE'):
+            for guide in ('ARCHITECTURE', 'INSTALLATION', 'MIGRATION', 'MODELS', 'WORKBENCH', 'WORKFLOW', 'LANGUAGE'):
                 self.assertIn(f'docs/{language}/{guide}.md', files)
         for forbidden in ('tests', '.shop', 'node_modules', 'runtime', 'sessions', 'docs', 'locales'):
             self.assertNotIn(forbidden, files)
@@ -86,7 +86,7 @@ class TarballAuditTests(unittest.TestCase):
             self.assertIn('core/language.py', names)
             for language in ('en', 'zh-CN'):
                 self.assertIn(f'locales/{language}.json', names)
-                for guide in ('ARCHITECTURE', 'MIGRATION', 'MODELS', 'WORKBENCH', 'WORKFLOW', 'LANGUAGE'):
+                for guide in ('ARCHITECTURE', 'INSTALLATION', 'MIGRATION', 'MODELS', 'WORKBENCH', 'WORKFLOW', 'LANGUAGE'):
                     self.assertIn(f'docs/{language}/{guide}.md', names)
             self.assertIn('README.zh-CN.md', names)
             self.assertNotIn('sync', names)

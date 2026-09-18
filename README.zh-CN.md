@@ -27,10 +27,19 @@
 
 ## 要求
 
-- Herdr >= 0.9.0，CLI/server 协议一致；Pi API 依赖兼容 0.85.1。
+- Herdr 0.9.0（当前适配器固定协议 22/schema 1），CLI/server 兼容；Pi API 依赖兼容 0.85.1。
 - Python >= 3.9、Node >= 22.19.0、Git；Bun 仅开发测试需要。
 - 用户自己配置 Pi Provider/模型。包内没有凭据或固定个人模型选择。
 - 保留 `@ogulcancelik/pi-herdr`，用于通用 agent read/wait/control 工具。
+
+## Git 安装（推荐）
+
+**两个入口安装同一完整 commit，再配置一个共享 bridge。**
+Pi 提供命令和设置；Herdr 提供原生操作和快捷键。安装其中一个不会自动安装另一个。
+
+按[安装与更新指南](docs/zh-CN/INSTALLATION.md)操作：环境检查 → 两端 Git 安装 → bridge → `/reload` → `/shop-config` → 快捷键 → 只读验证。
+以 Herdr 托管 checkout 为权威核心，模型/语言/状态文件放在两份代码之外。
+升级保留配置、同步更新两端固定引用，再 reload Pi；安装不会启动成员。
 
 ## 本地开发安装
 
@@ -39,7 +48,10 @@
 ```sh
 cd /absolute/path/to/shop-plugin
 npm ci --ignore-scripts
-npm test
+# 测试与已有安装的 bridge/配置/状态隔离。
+TEST_ROOT="$(mktemp -d)"
+SHOP_LOCATOR="$TEST_ROOT/bridge.json" SHOP_CONFIG_DIR="$TEST_ROOT/config" \
+  SHOP_STATE_DIR="$TEST_ROOT/state" npm test
 npm run typecheck
 
 # Preview first. Refuses to overwrite an existing bridge on apply.

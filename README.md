@@ -29,10 +29,19 @@ Not yet release-ready:
 
 ## Requirements
 
-- Herdr >= 0.9.0, matching CLI/server protocol; Pi API dependencies target 0.85.1-compatible versions.
+- Herdr 0.9.0 (current adapter pins protocol 22/schema 1), matching CLI/server; Pi API dependencies target 0.85.1-compatible versions.
 - Python >= 3.9, Node >= 22.19.0 for Pi, Git. Bun needed for development tests only.
 - Configured Pi providers/models. Plugin ships no credentials or hard-coded user model selection.
 - Keep `@ogulcancelik/pi-herdr` available for general agent read/wait/control tools.
+
+## Git installation (recommended)
+
+**Install both entrypoints at the same full commit, then configure one shared bridge.**
+Pi provides commands/settings; Herdr provides native actions and shortcuts. Installing one does not install the other.
+
+Follow the [step-by-step installation and update guide](docs/en/INSTALLATION.md): prerequisites → two Git installs → bridge → `/reload` → `/shop-config` → shortcuts → read-only checks.
+Use the Herdr-managed checkout as authoritative core. Keep model/language/state files outside both checkouts.
+Upgrades preserve configuration, update both pinned refs, and require Pi reload; installation does not start members.
 
 ## Local development installation
 
@@ -41,7 +50,10 @@ Commands below are **explicit setup steps**, not automatic install scripts. Do n
 ```sh
 cd /absolute/path/to/shop-plugin
 npm ci --ignore-scripts
-npm test
+# Keep tests separate from any already-installed bridge/configuration/state.
+TEST_ROOT="$(mktemp -d)"
+SHOP_LOCATOR="$TEST_ROOT/bridge.json" SHOP_CONFIG_DIR="$TEST_ROOT/config" \
+  SHOP_STATE_DIR="$TEST_ROOT/state" npm test
 npm run typecheck
 
 # Preview first. Refuses to overwrite an existing bridge on apply.
