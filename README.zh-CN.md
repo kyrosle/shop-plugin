@@ -2,80 +2,113 @@
 
 [English](README.md) · 简体中文
 
-**本地 alpha。一个仓库、两个插件入口、一个权威 Python 核心。**
-可见的独立 Pi 进程，文件工单交接，唯一主 Lead 负责派单和验收。
-不是 Pi 子进程编排框架；不克隆对话、不运行守护调度器、不拦截通用工具。
+**把当前 Pi 扩展成可见、可配置、有交付记录的协作工位。**
+你继续在原来的 Pi 中与 Architect 对话；主 Lead 负责拆解、派单和验收，Worker 执行具体任务。每个成员是 Herdr 中独立可见的 Pi，不克隆你的聊天历史。
 
-## 功能与限制
+> **当前为本地 alpha。** 已有离线回归、打包和安装检查，完整的真实模型协作闭环仍需受控验收。不是无人值守调度服务，也不保证一定更快、更省钱或自动完成任务。
 
-- Herdr 插件：开工、收工、状态、恢复报告、环境检查。
-- Pi：仅显式 `/shop <任务>` 委托；普通消息保持单 agent。工具包括 `shop_status`、`shop_patrol`、`shop_dispatch`、`shop_message`、`shop_handoff`，另有 `/shop-status` 查看状态。
-- `/shop-ui`：只读看板、精确实例接手/回执、新 worktree 准备、交付/ff-only 集成计划、空闲席位模型申请、scope/pause/cancel 干预和白名单诊断导出。见[工作台](docs/zh-CN/WORKBENCH.md)。
-- `/shop-reset`：预览并确认归档当前 tab 的初始化早期失败登记；不关 pane、不清模型配置、不自动开工。见[安全重置](docs/zh-CN/MIGRATION.md#重置初始化早期失败登记)。
-- `/shop-config`：全局/受信任目录/会话模型与思考配置、显式旧配置迁移、CAS 保存、Pi→Herdr 启动候选。现有工位保留固定快照。见[配置](docs/zh-CN/MODELS.md)。
-- 工单、绑定、checkpoint、验收、重试、清理；区分成员存在、缺失、移动、身份冲突与未知。
-- 同 Shop envelope 校验发送/接收 launch ID；全新会话；只剩原 Architect 时可显式恢复。
+[安装](#安装) · [配置](#配置) · [用法](#用法) · [效果与边界](#效果与边界) · [失败与重置](#失败与重置) · [升级](#升级与保留数据)
 
-尚不代表可直接替换生产工位：
+## 角色与模型：谁由 Shop 配置？
 
-- 部分/混合存活布局先看只读恢复计划，再显式执行，不自动重建。
-- Herdr 事件仅提供有界、非权威事实；工作台显式刷新共享快照。
-- `shop_message`/`shop_dispatch` 使用内置 transport 与持久回执，无 Herdr prompt 降级；CLI 只准备记录。busy 消息须显式 allow_busy；送达不是业务接受。
-- 启动身份与 Pi 会话身份分离；短期 endpoint 广告会过期。旧 launch/session 的操作拒绝；会话切换和 endpoint 生命周期仍需现场验证。
-- 动态角色注入仅 Architect；执行席位使用启动时提示文件。
-- 不自动迁移旧安装；打包后的开工/恢复尚未完成真实端到端验收。
-- POSIX 实现声明支持 Linux，但目前只在 macOS 测试；Windows 不支持（fcntl、shell wrapper）。
+| 角色 | 职责 | 模型来源 | 启动方式 |
+| --- | --- | --- | --- |
+| **Architect** | 与你对话、明确目标、向主 Lead 委托、汇总交付 | **当前 Pi 原有模型与思考档位** | 保留原 Pi，不重新启动 |
+| **主 Lead** | 唯一的拆单、派单、协调和验收负责人 | `/shop-config` 的主 Lead 配置 | 开工时启动 |
+| **辅助 Lead** | 按需承担执行或复核，不是第二个调度者 | `/shop-config` 的辅助 Lead 配置 | 按需扩员 |
+| **快速 Worker（低成本）** | 日常小任务、批量修改、快速执行 | 你为该用途选择的模型与思考档位 | 开工时启动 |
+| **稳健 Worker（重可靠性）** | 复杂实现、疑难修复、关键改动 | 你为该用途选择的模型与思考档位 | 按需扩员 |
 
-## 要求
+**Shop 不自动修改 Architect 的模型、思考档位或会话。** 在 Architect 中用 Pi 原生 `/model`、`/thinking` 调整；`/shop-config` 只管执行席位。
 
-- Herdr 0.9.0（当前适配器固定协议 22/schema 1），CLI/server 兼容；Pi API 依赖兼容 0.85.1。
-- Python >= 3.9、Node >= 22.19.0、Git；Bun 仅开发测试需要。
-- 用户自己配置 Pi Provider/模型。包内没有凭据或固定个人模型选择。
-- 保留 `@ogulcancelik/pi-herdr`，用于通用 agent read/wait/control 工具。
+两个 Worker 使用同一类角色实现，只是允许使用不同模型配置。名称表达用途，**不是模型价格、质量保证，也不意味着自动按任务路由模型**。内部 ID 仍为 `worker` / `worker-2`，已有配置无需因改名迁移。
 
-## Git 安装（推荐）
+初始工位是 **Architect + 主 Lead + 快速 Worker**；最多 **2 个 Lead + 2 个 Worker**，另加原 Architect。扩员不是开工即全部启动，也不是后台无限自动扩容。
 
-**两个入口安装同一完整 commit，再配置一个共享 bridge。**
-Pi 提供命令和设置；Herdr 提供原生操作和快捷键。安装其中一个不会自动安装另一个。
+## 效果与边界
 
-按[安装与更新指南](docs/zh-CN/INSTALLATION.md)操作：环境检查 → 两端 Git 安装 → bridge → `/reload` → `/shop-config` → 快捷键 → 只读验证。
-以 Herdr 托管 checkout 为权威核心，模型/语言/状态文件放在两份代码之外。
-升级保留配置、同步更新两端固定引用，再 reload Pi；安装不会启动成员。
+初始布局示意（不是实际运行截图）：
 
-## 本地开发安装
-
-以下是**明确安装步骤**，不是自动安装脚本。不要替换活动中的旧工位。
-
-```sh
-cd /absolute/path/to/shop-plugin
-npm ci --ignore-scripts
-# 测试与已有安装的 bridge/配置/状态隔离。
-TEST_ROOT="$(mktemp -d)"
-SHOP_LOCATOR="$TEST_ROOT/bridge.json" SHOP_CONFIG_DIR="$TEST_ROOT/config" \
-  SHOP_STATE_DIR="$TEST_ROOT/state" npm test
-npm run typecheck
-
-# Preview first. Refuses to overwrite an existing bridge on apply.
-python3 core/plugin.py configure
-python3 core/plugin.py configure --apply
+```text
+┌──────────────────────┬──────────────────────┐
+│                      │ 主 Lead              │
+│ Architect            │ 拆单、协调、验收     │
+│ 你原来的 Pi          ├──────────────────────┤
+│ 原模型、原会话       │ 快速 Worker          │
+│                      │ 执行具体任务         │
+└──────────────────────┴──────────────────────┘
+             按需增加辅助 Lead / 稳健 Worker
 ```
 
-默认 bridge：`~/.config/shop-workstation/bridge.json`，为两个入口指定权威代码、配置、状态目录。
-用其他 bridge 时两个宿主应一致设置 SHOP_LOCATOR；配置时可用 SHOP_STATE_DIR、SHOP_CONFIG_DIR 选目录。不得把可变状态放进安装目录。
-Herdr 插件上下文配置时可采用其插件配置/状态目录。
+| 你获得的能力 | 不应误解为 |
+| --- | --- |
+| 可见的独立成员，按席位配置模型 | 复制 Architect 的聊天历史，或强制所有成员用同一模型 |
+| 用途明确的模型配置，便于自己权衡成本与能力 | 自动测评模型、自动保证便宜或可靠 |
+| 工单、checkpoint、结果和验收记录 | 看见 `idle` 或消息送达就代表任务完成 |
+| 状态看板、显式接手、开发准备与交付操作 | 不经确认就创建 worktree、合并或 push |
+| 普通对话保持原有 Pi 用法 | 开窗后所有消息都自动转给 Lead |
 
-加载扩展后，在 Herdr Pi 用 `/shop-config` 设置各层模型与思考档位；各席位可不同。
-旧 models.json 可 `/shop-config migrate` 明确导入，不自动覆盖。
-Architect 保留已有 Pi 会话，模型用 `/model`、思考用 `/thinking`；Shop 不自动重置会话或切模型。
+业务流程是：**明确目标 → 建立并绑定任务 → 主 Lead 派单 → 执行者交付 → 主 Lead 验收 → Architect 汇总**。具体组织由角色和工具配合完成，不是固定的自动流水线。
+
+一次任务的预期交付包括：调查结论或修改摘要、适用的检查命令与结果证据、验收意见、未完成项和风险。主 Lead 保存任务的 `SUMMARY.md` / `REVIEW.md`，Architect 核对后向你汇总；不会把“已派工”或“窗口空闲”当成交付。
+
+## 安装
+
+### 1. 前提
+
+- Herdr **0.9.0**，当前适配器固定协议 **22 / schema 1**；CLI 与运行中的 server 必须兼容。
+- Pi **0.85.1 兼容 API**、Node **>=22.19.0**、Python **>=3.9**、Git。Bun 仅开发测试需要。
+- 先在 Pi 配好 Provider、凭据和可用模型；Shop 不提供凭据或预设个人模型。
+- 保留 `@ogulcancelik/pi-herdr`，用于通用 agent 查看、等待和控制能力。
+- 当前仅在 macOS 测试；Linux 为 POSIX 实现路径，尚未现场验收；Windows 不支持。
+
+插件以你的操作系统用户权限运行，不是沙箱。安装前检查源码，备份已有 Pi 设置、Herdr 插件/快捷键、Shop bridge、配置与运行登记。不要在执行成员工作或初始化操作仍在进行时切换代码。
+
+### 2. 两端安装同一个 Git 提交
+
+**两个入口都需要安装。** Pi 提供命令和配置界面；Herdr 提供快捷键、pane 生命周期操作和事件。一个不会自动安装另一个。
+
+以下固定到包含 `/shop-reset` 的 alpha 代码基线，不会自动跟随 `main`。升级时换成你核对过的完整 SHA，两个命令始终使用同一值：
 
 ```sh
-# Use compatible Herdr executable, not an old PATH copy.
-herdr plugin link /absolute/path/to/shop-plugin
-pi install /absolute/path/to/shop-plugin
+SHOP_REF='e7ec14cdf190ec2cedec505c5e0e55e38ad2fd69'
+pi install "git:github.com/kyrosle/shop-plugin@$SHOP_REF"
+herdr plugin install kyrosle/shop-plugin --ref "$SHOP_REF" --yes
 ```
 
-加载前停用旧手装 herdr-shop-mode，安装后 `/reload`；不要同时启用两个角色注入扩展。
-先备份，再手动配置快捷键：
+安装只更新代码与包引用，不启动 Lead/Worker，不派工。不要同时加载旧的手装 `herdr-shop-mode` 和新扩展。
+
+### 3. 首次安装：配置共享 bridge
+
+以 **Herdr 托管 checkout** 为权威 Python 核心；Pi 扩展通过 bridge 调用它。下面从默认 Herdr 注册表读取真实安装路径，不猜目录后缀：
+
+```sh
+SHOP_CORE="$(python3 - <<'PY'
+import json
+from pathlib import Path
+plugins = json.loads((Path.home() / '.config/herdr/plugins.json').read_text())
+matches = [p for p in plugins if p['plugin_id'] == 'shop.workstation']
+assert len(matches) == 1, 'Expected exactly one Shop plugin registration'
+print(matches[0]['plugin_root'])
+PY
+)"
+SHOP_CONFIG="$(herdr plugin config-dir shop.workstation)"
+SHOP_STATE="$HOME/.local/state/shop-workstation"
+
+# 先预览；检查路径后，再单独执行 --apply。
+SHOP_CONFIG_DIR="$SHOP_CONFIG" SHOP_STATE_DIR="$SHOP_STATE" \
+  python3 "$SHOP_CORE/core/plugin.py" configure
+
+# 仅首次配置，且确认预览无误后执行。
+SHOP_CONFIG_DIR="$SHOP_CONFIG" SHOP_STATE_DIR="$SHOP_STATE" \
+  python3 "$SHOP_CORE/core/plugin.py" configure --apply
+```
+
+默认 bridge：`~/.config/shop-workstation/bridge.json`。**已有 bridge 的普通升级不要重跑 `configure --apply`，更不要删 bridge 绕过保护。** 自定义 Herdr profile / `SHOP_LOCATOR` 的路径设置见[完整安装指南](docs/zh-CN/INSTALLATION.md)。
+
+### 4. 配置 Herdr 快捷键
+
+备份 Herdr `config.toml`，添加或替换对应条目；已有条目不要重复追加：
 
 ```toml
 [[keys.command]]
@@ -88,61 +121,158 @@ description = "Open Shop"
 key = "prefix+shift+u"
 type = "plugin_action"
 command = "shop.workstation.close"
-description = "Close idle unbound Shop"
+description = "Shop shutdown preview and checks"
 ```
 
-替换冲突条目，不重复追加。远程快捷键转发取决于 Herdr 客户端；插件安装在实际运行 pane 的服务器，远程行为需独立验证。
-使用此包明确的 bin/herdr-shop、bin/shop-run 路径，不覆盖全局 wrapper。
-必要时设置 SHOP_HERDR_BIN 指定兼容版本；Herdr 插件通常使用注入的 HERDR_BIN_PATH。
+修改后执行：
 
-## 中英文
+```sh
+herdr config check
+herdr server reload-config
+```
 
-`/shop-language` 选择 English / 简体中文 / 跟随系统；也可直接执行：
+默认 prefix 为 Ctrl+B：按下并松开 Ctrl+B，再按 U 开工；Shift+U 请求安全收工。远程使用时，插件应装在实际运行 pane 的主机，按键转发另看 Herdr 客户端配置。
+
+### 5. 加载并验证
+
+在你准备测试的 Herdr Pi tab 内执行：
 
 ```text
+/reload
 /shop-language zh-CN
-/shop-language en
-/shop-language auto
+/shop-config
 ```
 
-CLI：`bin/herdr-shop language [auto|zh-CN|en]`。语言是个人偏好，与模型配置分开，不修改在途工位。
-详情见[语言指南](docs/zh-CN/LANGUAGE.md)。
+语言可选 `en`、`zh-CN`、`auto`，也可单独运行 `/shop-language` 选择。语言只影响界面，不决定 agent 回复语言。
 
-## 安全与恢复
+在前述 shell 中进行不启动成员的验证：
 
-插件以你的 OS 用户权限执行，不是沙箱。安装前检查代码。文件锁/身份检查只约束 Shop 操作，不控制任意 shell。
+```sh
+git -C "$HOME/.pi/agent/git/github.com/kyrosle/shop-plugin" rev-parse HEAD
+git -C "$SHOP_CORE" rev-parse HEAD
+python3 "$SHOP_CORE/core/plugin.py" doctor
+```
 
-- Ctrl+B、U：从单个未缩放 Pi pane 开工，至少 140 列 × 40 行。新工位需要有效 Pi 配置候选；缺失时在原 Architect `/reload` 或 `/shop-config`。`setup --models-file ...` 是明确绕过会话层的替代入口。
-- 保留 Architect，主 Lead/Worker 全新启动；最多 2 Lead + 2 Worker。
-- 新增写入者必须独立、干净、登记的 worktree；不自动 stash/reset 用户改动。
-- 人工关闭不取消票，也不证明后台停止；shop_status 只报告观测。
-- 执行 pane 全部缺失时，开工可归档并恢复登记席位，不重发任务或自动 retry。
-- 部分缺失、移动、替换时拒绝；先检查，不删登记绕过。
-- pause 只发 Esc；retry --writer-stopped 前核实前台和后台作业。
-- 验收看报告/结果，不看屏幕文本或 idle。
-- 活动 run 阻止收工/清理；先处理完工单，再显式 unbind。
-- 不自动唤醒模型；Lead 巡检只在其活动回合内执行。
+两个 HEAD 应等于 `SHOP_REF`。doctor 是环境检查，不是 Provider 调用或协作任务验收。
 
-详见[工作流](docs/zh-CN/WORKFLOW.md)、[架构](docs/zh-CN/ARCHITECTURE.md)、[迁移](docs/zh-CN/MIGRATION.md)。
+## 配置
 
-## 分发与许可
+`/shop-config` 默认打开 **会话** 层；想作为以后新工位的常用配置，先按 Tab 切到 **全局**。
 
-包不包含运行状态、会话、用户配置、凭据、worktree。`private: true` 阻止误发 npm，仍可通过 Git 安装 Pi 包。
-项目许可证仍待确定。THIRD_PARTY.md、LICENSE.pi-intercom、transport/NOTICE.md 仅适用各自组件，不自动授权整个项目。
-两个入口须协议兼容，bridge 指定权威核心；切换前停止在途变更，保证状态兼容。卸载代码不删除项目数据。
+- Tab 切换全局 / 受信任目录 / 会话；↑↓ 选字段，Enter 编辑。
+- 为主 Lead、辅助 Lead、快速 Worker、稳健 Worker 选择模型与思考档位；允许多个席位使用同一模型。
+- 模型选择器支持模型 ID、名称、Provider 模糊搜索，最多 10 行的定高列表，可上下滚动或翻页。
+- “继承父层”清除覆盖；思考档位随所选模型能力变化。
+- S 预览并确认保存；R 预览清除当前层模型覆盖；Esc 取消。**这里的 R 不是 `/shop-reset`。**
+- 可以保存不完整草稿，但开工前四个执行席位都必须解析到模型，包括尚未启动的辅助席位。
 
-## 收工、恢复与打包
+配置优先级：**会话 > 受信任目录 > 全局 > 内置默认**；每层内部 **席位 > 角色 > defaults**。内置不指定模型品牌。
 
-收工是独立于 agent 的**用户权限**。Shift+U 的 close action 在独立 core/plugin.py 中预览、复检，才关闭 pane；调用方执行 pane 最后关闭，Architect 始终保留。
-没有 Herdr plugin-action 上下文拒绝执行，不给 agent 增加强制关闭工具。
+### 改配置什么时候生效？
 
-绑定 run/登记绑定、active/blocked/unknown、身份漂移、缺失/移动/替换/重复成员、管理 tab 内外来 pane、坏/超大状态、过期计划、未决传输/接手、前台工作、background_state_unknown 均失败拒绝，不关闭任何 pane。
-协议 22 没有后台/后代进程清单，必须报告能力缺失，不能假定停止。
+| 操作 | 影响 |
+| --- | --- |
+| 保存 `/shop-config` | 后续新建工位；不热切换已有成员，也不改 Pi 默认模型 |
+| 当前工位扩员或恢复 | 使用该工位开工时固定的模型快照 |
+| `/shop-ui` 的空闲席位模型申请 | 接收方用户另行确认后应用；可选择更新该工位对应席位快照 |
+| Architect 的 `/model`、`/thinking` | 由你直接调整当前 Architect，不走远程席位申请 |
 
-执行日志：归档 → shutdown_closing → 逐目标核实缺失 → 最终布局/Architect/agent 验证 → 回执/tombstone → 移除登记。
-失败保留 shutdown_partial 与剩余名单，不发成功通知；重复关闭只有匹配回执且确认目标缺失才返回 already_closed。
+已有旧 `models.json` 可通过 `/shop-config migrate` 预览后导入，不自动覆盖。详情见[配置与继承](docs/zh-CN/MODELS.md)。
 
-recovery 生成只读协调计划，分类 present_exact/moved_exact/missing/identity_mismatch/replacement/duplicate/unknown，不恢复、改派、重放、关闭或删除。实际执行另需显式授权。
+## 用法
 
-包/manifest 版本统一为 0.1.0-alpha.1。打包使用源码目录及双语文档/词条的明确白名单，保留许可证与第三方归属。
-**LICENSE 尚待项目所有者决定；此前不要公开发布。** 切换与回退见[迁移](docs/zh-CN/MIGRATION.md)。
+### 1. 开工：只创建席位，不自动派任务
+
+在项目目录中的 Herdr Pi，准备一个只有当前 Pi 的未缩放 tab，终端至少 **140 列 × 40 行**。确认配置已保存，再按 **Ctrl+B → U**。
+
+Architect 保留，主 Lead 和快速 Worker 以全新 Pi 会话启动。辅助席位按需扩员；额外写入者须使用独立、干净、已登记的 worktree。不会自动 stash、reset 或提交你的改动。
+
+### 2. 明确委托一个任务
+
+在 **Architect** 中输入，例如：
+
+```text
+/shop 调查登录失败原因，先只读分析，给出复现步骤、根因和修复建议。
+```
+
+或明确授权修改：
+
+```text
+/shop 修复登录超时问题，修改范围限于 auth 和对应测试；完成后给出测试证据，不要自动 push。
+```
+
+`/shop` 仅为**这一次请求**启用委托。普通聊天、问答或修改请求仍由当前 Pi 处理；要把补充交给工位，用 `/shop 补充：…`。
+
+工位须已就绪。目标明确的新任务、且工位未绑定 run 时，Architect 的流程是创建独立 run、写最小必要目标/计划、显式绑定，再交给主 Lead。已有不同任务绑定时先协调，不能混入旧任务。开窗本身不创建或自动选择 run。
+
+默认流程要求 Architect 等待并核对交付后汇总；不是发送一句“已派工”就算完成。后台执行须单独要求，且没有自动唤醒或持续巡检保证。技术细节见[任务工作流](docs/zh-CN/WORKFLOW.md)。
+
+### 3. 查看、干预与交付
+
+| 命令 / 操作 | 用途 |
+| --- | --- |
+| `/shop-status` | 当前工位状态摘要 |
+| `/shop-ui` | 状态与身份、接手/回执、开发准备、交付/集成、空闲席位配置、任务干预、诊断 |
+| `/shop-config` | 配置后续新工位的执行模型与思考档位 |
+| `/shop-language` | 选择中英文或跟随系统 |
+| `/shop-reset` | 预览并确认归档当前 tab 的初始化早期失败登记 |
+| Ctrl+B → Shift+U | 请求带身份与任务检查的安全收工，保留 Architect |
+
+工作台查看不自动派单；业务修改还需要明确的 run 绑定。消息送达 ≠ 接手接受 ≠ 工单验收。交付集成只支持确认后的 fast-forward，不自动 push、关闭任务或释放资源。详见[工作台指南](docs/zh-CN/WORKBENCH.md)。
+
+收工前先保存交付、处理完工单、确认写入者停止并显式解除绑定。**`idle` 不证明后台停止。** 当前 Herdr 协议缺少后台进程可见性，收工可能因 `background_state_unknown` 拒绝；不要强行删登记或关窗绕过。
+
+## 失败与重置
+
+开工失败时不要反复按 U：某个写操作可能已经成功，只是返回解析失败。
+
+在**出问题的 tab** 内执行：
+
+```text
+/shop-reset
+```
+
+它先展示原始失败原因与身份差异，再让你确认。仅接受成员分屏前失败、没有成员或任务绑定、原 Pi pane/终端匹配的情况；显示名称丢失可在严格核对后确认。已有成员、额外 pane、替换终端或未知身份会拒绝。
+
+成功时先把原始登记归档，再移除该 tab 的活动登记：**不关 Pi、不清模型配置、不删任务/worktree、不碰其他 tab，也不自动重新开工。** 准备好后手动按 U。
+
+`/shop-reset` 不是旧 CLI `reset` 的成员关闭操作，也不是全局“强制清缓存”。其他故障走[安全恢复](docs/zh-CN/MIGRATION.md#重置初始化早期失败登记)。
+
+## 升级与保留数据
+
+1. 停止在途工位变更，核对执行成员、任务与写入者；备份配置、登记和旧安装引用。
+2. 两端安装同一个新完整 SHA，检查两个 HEAD 和 bridge 指向，再在需要测试的 Pi 中 `/reload`。
+3. 保留既有 bridge 和模型/语言配置。升级代码不等于重置工位，也不会自动迁移活动任务。
+4. 若仅保留已核实不再执行的失败登记，可在明确选择只升级代码后再单独恢复；不因其他 tab 有旧登记就擅自清理它。详情见[升级与回退](docs/zh-CN/INSTALLATION.md#更新与回退)。
+
+数据按职责集中存放，不全挤在一个文件里：
+
+| 数据 | 默认位置 / 规则 |
+| --- | --- |
+| 共享代码定位 | `~/.config/shop-workstation/bridge.json` |
+| 全局模型与个人语言 | `<bridge.config_dir>/settings.json`、`language.json` |
+| 目录配置 / 会话配置 | 项目 `.pi/shop.json` / 当前 Pi 分支的 custom entry |
+| 工位登记、成员会话及运行证据 | `<bridge.state_dir>/`；登记在 `runtime/`，按 socket + tab 独立定位 |
+| 早期失败登记归档 | `<bridge.state_dir>/reset-archive/` |
+| 任务、工单、绑定与交付证据 | 项目 `.shop/` |
+
+安装采用上述命令时，状态目录为 `~/.local/state/shop-workstation`；配置目录由 Herdr 的 `plugin config-dir` 返回。可变数据不放进两份代码 checkout，卸载插件也不代表可以删除任务、会话或 worktree。
+
+## 开发、验证与许可
+
+```sh
+npm ci --ignore-scripts
+TEST_ROOT="$(mktemp -d)"
+SHOP_LOCATOR="$TEST_ROOT/bridge.json" SHOP_CONFIG_DIR="$TEST_ROOT/config" \
+  SHOP_STATE_DIR="$TEST_ROOT/state" npm test
+npm run typecheck
+npm pack --dry-run
+```
+
+开发时可显式 `herdr plugin link /absolute/path/to/shop-plugin` 和 `pi install /absolute/path/to/shop-plugin`。只在隔离、非活动环境使用开发 bridge；不要覆盖现有安装或启用两份角色扩展。
+
+离线测试涵盖配置、身份、传输、工单、恢复及 UI 替身；不证明真实模型理解、协作质量或所有宿主交互正确。现场测试应使用专门 tab/隔离项目，别拿活动业务工位试错。没有永久调度器、自动重试或无条件强制关闭。
+
+`private: true` 防止误发 npm，不影响 Git 安装。包不含运行状态、会话、凭据或 worktree。项目许可证尚待所有者决定；参见 [LICENSE](LICENSE)、[THIRD_PARTY.md](THIRD_PARTY.md) 和 [LICENSE.pi-intercom](LICENSE.pi-intercom)，不要假定第三方许可证自动适用于整个项目。
+
+详细资料：[安装](docs/zh-CN/INSTALLATION.md) · [配置](docs/zh-CN/MODELS.md) · [工作台](docs/zh-CN/WORKBENCH.md) · [任务工作流](docs/zh-CN/WORKFLOW.md) · [架构](docs/zh-CN/ARCHITECTURE.md) · [语言](docs/zh-CN/LANGUAGE.md) · [迁移与恢复](docs/zh-CN/MIGRATION.md)

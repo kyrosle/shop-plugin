@@ -26,7 +26,8 @@
 ### 切换前
 
 - 清点活动工位/绑定/工单/进程、Pi 扩展来源、Herdr 插件链接、快捷键、Shop broker/socket/lock，以及已有 pi-intercom 实例。
-- 活动 run、未知写入者或部分完成操作存在时拒绝切换。活动 run 迁移不受支持；先完成协调并 unbind，不手改活动状态。
+- 活动 run、未知写入者或仍在进行的初始化/成员变更存在时拒绝切换。活动 run 迁移不受支持；先完成协调并 unbind，不手改活动状态。
+- 保留的失败登记与仍在执行的操作不同。核实执行/变更已停止且没有未知写入者后，可明确授权只升级代码、逐字节保留登记。恢复/reset 是单独操作，只针对目标 tab；其他 tab 的旧记录不是清理授权。
 - 预览每项文件/配置变化，在仓库外备份 bridge、模型/角色配置、语言偏好、Herdr 快捷键、旧插件引用与版本信息。
 - 不修改已安装 pi-intercom、不接管其 socket，不把 unlink 当进程停止，不同时开两个 Shop 角色扩展。
 - 先在隔离 profile 安装精确测试过的 tag/commit，运行 doctor、`npm test`、`npm run typecheck`、`npm pack --dry-run`。

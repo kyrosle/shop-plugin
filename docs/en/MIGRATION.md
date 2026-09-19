@@ -33,8 +33,9 @@ Before cutover:
 - Inventory active shops/bindings/tickets/processes, Pi extension load sources,
   the Herdr plugin link, keybindings, the Shop transport broker/socket/lock and
   any original `pi-intercom` instance.
-- Refuse cutover on an active run, an unknown writer or a partial operation;
+- Refuse cutover on an active run, an unknown writer or an in-flight setup/member mutation;
   active-run migration is unsupported; settle and unbind before cutover, never move active state by editing JSON.
+- Retained failed registration is distinct from ongoing execution. After verifying that execution/mutations stopped and no writer remains unknown, an explicitly authorized code-only update may preserve it byte-for-byte. Recovery/reset is separate and targets only the affected tab; another tab's old record is not cleanup authorization.
 - Preview every config/file change and back up bridge, model/role config, language preference, Herdr
   keybindings, prior plugin references and version metadata outside the repo.
 - Never modify installed `pi-intercom`, take over its socket, treat an unlink as

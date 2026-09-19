@@ -32,7 +32,7 @@ pi list
 
 Before changing anything, privately back up Pi package settings, Herdr plugin references/keybindings and any existing Shop bridge/configuration/state outside this repository. Inspect existing managed checkouts for local edits: installers may reset or replace them.
 
-An active run, unknown writer or partial operation blocks upgrade. Do not infer stopped writers from `idle` or a closed pane. Follow [migration and rollback](MIGRATION.md) for existing/legacy Shops; never enable old and new role-injection extensions together.
+An active run, unknown writer or in-flight setup/member mutation blocks upgrade. Do not infer stopped writers from `idle` or a closed pane. A retained failed registration is not itself an ongoing operation or permission to reset another tab. After verifying that its Shop execution/mutations have stopped and no writer remains unknown, the owner may explicitly choose a code-only upgrade that preserves registration bytes, then handle recovery separately in the affected tab. Follow [migration and rollback](MIGRATION.md); never enable old and new role-injection extensions together.
 
 ## 2. Install the same reviewed commit twice
 
