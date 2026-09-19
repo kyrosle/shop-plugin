@@ -11,7 +11,8 @@ import { configCall, configContext, configRequest, SESSION_CONFIG, SEATS, sessio
 
 const SCOPES: Scope[] = ["global", "project", "session"];
 const scopeLabels = () => ({ global: t("Global"), project: t("Project"), session: t("Session") });
-const seatLabels = () => ({ lead: t("Primary Lead"), "lead-2": t("Auxiliary Lead"), worker: "Worker 1", "worker-2": "Worker 2" });
+const seatLabels = () => ({ lead: t("Primary Lead"), "lead-2": t("Auxiliary Lead"),
+  worker: t("Fast Worker (low cost)"), "worker-2": t("Steady Worker (reliable)") });
 type Result = { type: "cancel" | "save" | "reset" | "scope" } | { type: "edit"; seat: Seat; field: "model" | "thinking" };
 
 /** Uses Pi's SettingsList for navigation/scrolling; outer keys match Curator. */
@@ -25,6 +26,8 @@ export function settingsPanel(scope: Scope, target: string, draft: Profiles, vie
     const source = changed ? t("Draft") : layer.sources[seat][field] ?? t("Built-in");
     const sourceLabel = SCOPES.includes(source as Scope) ? scopeLabels()[source as Scope] : source;
     return { id: `${seat}:${field}`, label: `${seatLabels()[seat]} · ${field === "model" ? t("Model") : t("Thinking")}`,
+      description: seat === "worker" ? t("Routine tasks, batch edits and fast execution; choose the model yourself.")
+        : seat === "worker-2" ? t("Complex implementation, difficult fixes and critical changes; choose the model yourself.") : undefined,
       currentValue: `${value ?? (field === "model" ? t("Not configured") : t("Pi default"))} ← ${sourceLabel}` };
   }));
   // Submenu returns control to the command, which opens the draft model/effort picker.

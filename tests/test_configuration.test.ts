@@ -223,6 +223,30 @@ for (const language of ["en", "zh-CN"]) test(`${language} settings actions and n
   expect(results.map(r => r.type)).toEqual(["scope", "save", "reset", "cancel"]);
 }));
 
+for (const language of ["en", "zh-CN"]) test(`${language} Worker purpose labels preserve seat IDs and draft values`, async () => fixture(async f => {
+  writeFileSync(join(f.bridge.config_dir, "language.json"), JSON.stringify({ version: 1, language }));
+  const view = await configCall<ConfigView>(f.pi, f.bridge, { action: "load", ...configRequest(configContext(f.bridge, f.ctx), {}) });
+  const draft = view.layers.session.profiles;
+  const before = JSON.stringify(draft);
+  const labels = language === "en" ? ["Fast Worker (low cost)", "Steady Worker (reliable)"]
+    : ["快速 Worker（低成本）", "稳健 Worker（重可靠性）"];
+  const descriptions = language === "en" ? ["Routine tasks", "Complex implementation"] : ["日常小任务", "复杂实现"];
+  for (const [index, seat] of ["worker", "worker-2"].entries()) for (const field of ["model", "thinking"]) {
+    const results: any[] = [];
+    const panel = settingsPanel("session", "session:test", draft, view, r => results.push(r), () => {}, ["session"], true,
+      { label: t => t, value: t => t, description: t => t, hint: t => t, cursor: "›" }, `${seat}:${field}`);
+    const text = panel.render(120).join("\n");
+    for (const label of labels) expect(text).toContain(label);
+    expect(text).toContain(descriptions[index]);
+    expect(text).not.toMatch(/Worker [12]/);
+    for (const width of [4, 12, 40, 80]) for (const line of panel.render(width)) expect(visibleWidth(line)).toBeLessThanOrEqual(width);
+    panel.handleInput!("\r");
+    expect(results).toEqual([{ type: "edit", seat, field }]);
+  }
+  expect(JSON.stringify(draft)).toBe(before);
+  expect(f.saved).toHaveLength(0);
+}));
+
 test("candidate publisher invalidates old session; cleanup never deletes replacement", async () => fixture(async f => {
   await f.publisher.start(f.ctx);
   const path = candidatePath(f.bridge);

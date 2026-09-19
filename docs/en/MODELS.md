@@ -25,6 +25,13 @@ Architect keeps its native Pi model/session; use `/model` and `/thinking`.
 Saving does not remotely switch running members, restart Pi or change Pi's global defaults.
 The panel exposes the model group only; no setting bypasses identity or stopped-writer checks.
 
+### Worker profile names
+
+- **Fast Worker (low cost)** (`worker`): routine tasks, batch edits and fast execution.
+- **Steady Worker (reliable)** (`worker-2`): complex implementation, difficult fixes and critical changes.
+
+These are intended uses for two profiles of the same Worker role, not different implementations or guarantees about a model's price or quality. Choose each model yourself. Names in the panel and pickers change only presentation: stored IDs, existing profiles, expansion and dispatch rules remain unchanged. Selecting a Worker field shows its purpose description.
+
 ## Layers and files
 
 | Scope | Storage |
