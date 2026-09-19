@@ -228,7 +228,8 @@ ROUTES = {
     ('agent', 'start'): ('agent', ('agent_started',)),
     ('agent', 'prompt'): ('agent', ('agent_prompted',)),
     ('agent', 'send-keys'): (None, ('ok',)),
-    ('agent', 'rename'): (None, ('ok',)),
+    # Rename returns the updated agent, not a generic acknowledgement.
+    ('agent', 'rename'): ('agent', ('agent_info',)),
     ('notification', 'show'): (None, ('notification_show',)),
 }
 # Names not declared by the pinned schema, kept deliberately and only where a

@@ -259,6 +259,36 @@ class RouteSchemaTests(unittest.TestCase):
         with self.assertRaises(herdr.HerdrSchemaError):
             adapter({('agent', 'get', 'w5:p4'): (0, json.dumps(fixture('pane-get.json')), '')}).call('agent', 'get', 'w5:p4')
 
+    def test_agent_rename_returns_validated_agent_info(self):
+        response = fixture('agent-get.json')
+        response['result']['agent']['name'] = 'demo-renamed'
+        response['result']['agent']['screen_detection_skipped'] = True
+        route = ('agent', 'rename', 'w5:p4', 'demo-renamed')
+        instance = adapter({route: (0, json.dumps(response), '')})
+        result = instance.rename_agent('w5:p4', 'demo-renamed')
+        self.assertEqual(result, {'agent': response['result']['agent']})
+        self.assertEqual(result['agent']['terminal_id'], 'term_sanitized4')
+        self.assertEqual(sum(call[0][1:] == route for call in instance.runner.calls), 1)
+
+    def test_agent_rename_rejects_untyped_or_malformed_response_without_retry(self):
+        agent = fixture('agent-get.json')['result']['agent']
+        replies = [
+            {'type': 'ok'},
+            {'type': 'pane_info', 'pane': fixture('pane-get.json')['result']['pane']},
+            {'type': 'agent_info'},
+            {'type': 'agent_info', 'agent': None},
+            {'type': 'agent_info', 'agent': dict(agent, screen_detection_skipped='yes')},
+            {'type': 'agent_info', 'agent': dict(agent, unexpected_field=True)},
+        ]
+        route = ('agent', 'rename', 'w5:p4', 'demo-renamed')
+        for reply in replies:
+            with self.subTest(reply=reply):
+                instance = adapter({route: (0, json.dumps({'result': reply}), '')})
+                with self.assertRaises(herdr.HerdrSchemaError):
+                    instance.rename_agent('w5:p4', 'demo-renamed')
+                # A bad reply may follow a successful mutation. Never replay it.
+                self.assertEqual(sum(call[0][1:] == route for call in instance.runner.calls), 1)
+
     def test_missing_payload_key_refused(self):
         with self.assertRaises(herdr.HerdrSchemaError):
             adapter({('pane', 'get', 'w5:p4'): (0, json.dumps({'result': {'type': 'pane_info'}}), '')}
