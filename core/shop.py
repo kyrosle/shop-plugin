@@ -308,7 +308,8 @@ def main():
             state = {'schema_version': 1, 'tab': tab, 'cwd': cwd, 'prefix': prefix, 'shop_id': key + '-' + uuid.uuid4().hex[:8], 'phase': 'creating', 'layout': 'left-architect-right-zones',
                      'architect': {'pane': pane['pane_id'], 'name': prefix + '-architect',
                                    'terminal_id': pane.get('terminal_id')},
-                     'workers': [], 'model_profiles': profiles, 'config_source': config_source}
+                     'workers': [], 'model_profiles': profiles, 'config_source': config_source,
+                     'setup_stage': 'architect'}
             identity.assign_identity(state['architect'],
                                      terminal_id=pane.get('terminal_id'),
                                      launch_id=uuid.uuid4().hex,
@@ -317,6 +318,9 @@ def main():
             try:
                 api('agent', 'rename', pane['pane_id'], state['architect']['name'])
                 api('pane', 'rename', pane['pane_id'], 'Architect · current Pi')
+                # Journal before the first split: failed replies may hide a created pane.
+                state['setup_stage'] = 'members'
+                save(path, state)
                 # Left Architect; right upper Lead and lower Worker zones.
                 lead = api('pane', 'split', '--pane', pane['pane_id'], '--direction', 'right',
                            '--cwd', cwd, '--no-focus')['pane']['pane_id']
@@ -330,6 +334,7 @@ def main():
                 start(state['lead'], 'lead', state)
                 save(path, state)
                 start(state['workers'][0], 'worker', state)
+                state.pop('setup_stage', None)
                 state['phase'] = 'ready'
                 save(path, state)
             except Exception as error:

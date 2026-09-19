@@ -113,9 +113,8 @@ def restore(api, start, save, path, state, caller, dry_run=False, plan=None):
             or not isinstance(workers, list) or not workers
             or any(not isinstance(item, dict) or not item.get('pane') or not item.get('name')
                    for item in workers)):
-        raise RuntimeError('Incomplete setup registration: primary Lead/Worker seats were not fully recorded. '
-                           'No automatic retry. Inspect the saved error and live panes; '
-                           'preview reset from the original Architect before any fresh setup.')
+        raise RuntimeError('Incomplete setup registration. Run /shop-reset in the original Architect Pi '
+                           'for a safe preview. No automatic retry; existing members or uncertain identity block reset.')
     architect = state['architect']
     if caller['pane_id'] != architect['pane'] or caller.get('agent') != 'pi':
         raise RuntimeError('Focus original Architect Pi before restoring seats')

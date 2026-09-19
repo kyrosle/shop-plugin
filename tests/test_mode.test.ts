@@ -58,11 +58,12 @@ test("Herdr factory registers only scoped tools and no interception or outgoing 
   const old=process.env.HERDR_ENV; process.env.HERDR_ENV="1";
   try {
     const hooks: string[]=[];
-    const tools: string[] = [];
-    // Any outgoing prompt or tool_call interception is unexpected.
-    extension({on(name:string){hooks.push(name);}, registerTool(t:any){tools.push(t.name);}, registerCommand(){}} as any);
+    const tools: string[] = [], commands: string[] = [];
+    // Reset remains a user command, never a callable model tool or interception.
+    extension({on(name:string){hooks.push(name);}, registerTool(t:any){tools.push(t.name);}, registerCommand(name:string){commands.push(name);}} as any);
+    expect(commands).toContain("shop-reset");
     expect(tools).toEqual(["shop_message", "shop_status", "shop_patrol", "shop_dispatch", "shop_handoff"]);
-    expect(hooks).toEqual(["session_tree","session_start","session_shutdown","before_agent_start"]);
+    expect(hooks).toEqual(["session_start","session_shutdown","session_tree","session_tree","session_start","session_shutdown","before_agent_start"]);
     expect(hooks).not.toContain("tool_call");
   } finally { if(old===undefined)delete process.env.HERDR_ENV;else process.env.HERDR_ENV=old; }
 });

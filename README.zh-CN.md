@@ -11,6 +11,7 @@
 - Herdr 插件：开工、收工、状态、恢复报告、环境检查。
 - Pi：仅显式 `/shop <任务>` 委托；普通消息保持单 agent。工具包括 `shop_status`、`shop_patrol`、`shop_dispatch`、`shop_message`、`shop_handoff`，另有 `/shop-status` 查看状态。
 - `/shop-ui`：只读看板、精确实例接手/回执、新 worktree 准备、交付/ff-only 集成计划、空闲席位模型申请、scope/pause/cancel 干预和白名单诊断导出。见[工作台](docs/zh-CN/WORKBENCH.md)。
+- `/shop-reset`：预览并确认归档当前 tab 的初始化早期失败登记；不关 pane、不清模型配置、不自动开工。见[安全重置](docs/zh-CN/MIGRATION.md#重置初始化早期失败登记)。
 - `/shop-config`：全局/受信任目录/会话模型与思考配置、显式旧配置迁移、CAS 保存、Pi→Herdr 启动候选。现有工位保留固定快照。见[配置](docs/zh-CN/MODELS.md)。
 - 工单、绑定、checkpoint、验收、重试、清理；区分成员存在、缺失、移动、身份冲突与未知。
 - 同 Shop envelope 校验发送/接收 launch ID；全新会话；只剩原 Architect 时可显式恢复。

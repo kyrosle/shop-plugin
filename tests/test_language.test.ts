@@ -143,7 +143,7 @@ test("localized snapshot keeps original status, IDs, user text and error detail"
 });
 
 test("all literal UI translation calls have shared catalogue entries", () => {
-  for (const name of ["index", "language-ui", "settings-ui", "workbench-ui", "state", "transport"]) {
+  for (const name of ["index", "language-ui", "settings-ui", "reset-ui", "model-picker", "workbench-ui", "state", "transport"]) {
     const file = resolve(`extensions/${name}.ts`), source = readFileSync(file, "utf8");
     const tree = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true);
     function walk(node: ts.Node) {

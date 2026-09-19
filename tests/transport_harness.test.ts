@@ -470,7 +470,7 @@ test("idle broker exits by itself and cleans up its runtime files", async () => 
   const socketPath = harness.socketPath;
   const pidPath = getBrokerPidPath(harness.transportDir);
   const deadline = Date.now() + 8_000;
-  while (Date.now() < deadline && existsSync(socketPath)) {
+  while (Date.now() < deadline && (existsSync(socketPath) || existsSync(pidPath))) {
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   expect(existsSync(socketPath)).toBe(false);

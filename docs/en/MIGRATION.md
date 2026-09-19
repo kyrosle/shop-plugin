@@ -63,6 +63,18 @@ the documented order stays: settle tickets → explicit unbind → user shutdown
 `core/shop.py shutdown --preview` is read-only diagnosis; execution needs Herdr
 plugin-action context.
 
+## Reset an early failed setup
+
+`/shop-reset` in the affected tab's Pi is an interactive, registration-only reset. It takes no arguments or force flag. It is **not** the legacy `core/shop.py reset` member-closing operation, and not a global cache wipe.
+
+1. The command previews this tab's registration, original setup error and Architect name difference. Cancel leaves the registration unchanged.
+2. Eligibility is deliberately narrow: `partial`, still before the first member split, no recorded Lead/Workers, no run or matching project binding, and only the original Pi pane/terminal in the tab. Other same-Shop named agents, including moved members, block reset.
+3. A lost Architect display name can be acknowledged only with the same pane, tab, terminal and project. A different named agent, replacement terminal or unknown evidence blocks reset. Legacy records without a stage marker qualify only for an identifiable Architect rename failure before splitting.
+4. After confirmation, the normal per-tab lock and a fresh preview token check guard execution. State, binding or identity changes refuse application. The exact registration bytes are privately archived under `<bridge.state_dir>/reset-archive/` before the active file is removed. An uncertain result is never automatically retried; inspect the original file and archive first.
+5. Pi, panes, model/language settings, tickets, worktrees and other tabs remain unchanged. Nothing is relaunched. Start Shop manually when ready.
+
+Ready Shops, partial member creation, active tasks and ambiguous identity still require the existing safe shutdown/recovery workflow. Do not erase files to bypass a refusal. Offline tests cover these gates; live Pi/Herdr recovery acceptance remains separate.
+
 ## Language preferences
 
 Display language lives in a separate `<bridge.config_dir>/language.json`. It needs

@@ -17,6 +17,7 @@ from unittest.mock import patch
 import herdr
 import settings
 import shop
+import reset
 from test_herdr import Result, wire
 
 
@@ -41,6 +42,10 @@ class SetupRunner:
             return self.probe_runner(argv, **kwargs)
         if route == ('pane', 'current'):
             result = {'type': 'pane_current', 'pane': self.panes['p1']}
+        elif route == ('pane', 'get'):
+            result = {'type': 'pane_info', 'pane': self.panes[args[2]]}
+        elif route == ('agent', 'list'):
+            result = {'type': 'agent_list', 'agents': list(self.agents.values())}
         elif route == ('pane', 'layout'):
             result = {'type': 'pane_layout', 'layout': {
                 'area': {'x': 0, 'y': 0, 'width': 200, 'height': 60},
@@ -118,6 +123,26 @@ class SetupAdapterTests(unittest.TestCase):
             ('pane', 'rename'), ('agent', 'start'),
             ('pane', 'rename'), ('agent', 'start')])
 
+    def test_early_failure_reset_uses_real_adapter_without_more_mutations(self):
+        runner = SetupRunner(self.cwd, (('pane', 'rename'), 1))
+        with self.assertRaises(herdr.HerdrSchemaError):
+            self.run_setup(runner)
+        self.assertEqual(json.loads(self.path.read_text())['setup_stage'], 'architect')
+        original = self.path.read_bytes()
+        mutations = list(runner.mutations)
+        # Simulate display-name loss, but retain exact original Pi terminal.
+        runner.agents['p1'].pop('name')
+        adapter = herdr.Herdr(binary='/fake/herdr', runner=runner)
+        env = {'HERDR_ENV': '1', 'HERDR_PANE_ID': 'p1', 'HERDR_TAB_ID': 't1',
+               'HERDR_SOCKET_PATH': 'fixture-socket'}
+        plan = reset.request(adapter.api, self.state_root, {'action': 'preview'}, env)
+        self.assertEqual(plan['decision'], 'ready')
+        result = reset.request(adapter.api, self.state_root,
+                               {'action': 'apply', 'confirmed': True, 'token': plan['token']}, env)
+        self.assertEqual(Path(result['archive']).read_bytes(), original)
+        self.assertFalse(self.path.exists())
+        self.assertEqual(runner.mutations, mutations)
+
     def test_failed_mutation_then_open_preserves_evidence_without_retry(self):
         failures = [(('agent', 'rename'), 1), (('pane', 'rename'), 1),
                     (('pane', 'split'), 1), (('pane', 'split'), 2),
@@ -134,6 +159,7 @@ class SetupAdapterTests(unittest.TestCase):
                 before = self.path.read_bytes()
                 state = json.loads(before)
                 self.assertEqual(state['phase'], 'partial')
+                self.assertEqual(state['setup_stage'], 'architect' if failure[0][1] == 'rename' else 'members')
                 self.assertIn('expected response type', state['error'])
                 self.assertEqual(runner.mutations[-1], failure[0])
                 self.assertEqual(runner.mutations.count(failure[0]), failure[1])

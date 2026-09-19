@@ -1,5 +1,6 @@
 import { t } from "./i18n.js";
 import { registerLanguageCommand } from "./language-ui.js";
+import { registerResetCommand } from "./reset-ui.js";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { readFileSync, existsSync } from "node:fs";
@@ -16,6 +17,7 @@ import { workbenchUI, submitPrepared, workbenchClient } from "./workbench-ui.js"
 export default function shopMode(pi: ExtensionAPI) {
   if (process.env.HERDR_ENV !== "1") return;
   registerLanguageCommand(pi);
+  registerResetCommand(pi);
   const configPublisher = new ConfigPublisher(pi);
   pi.registerCommand("shop-ui", { description: "Shop workbench / 工作台：status, handoffs, development, delivery, configuration", handler: async (_args, ctx) => {
     try { await workbenchUI(pi, ctx); } catch (error) { ctx.ui.notify(String(error), "error"); }

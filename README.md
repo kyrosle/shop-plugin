@@ -12,6 +12,7 @@ Implemented:
 - Herdr manifest actions: open, close, status, recovery report, doctor.
 - Pi package: explicit per-request `/shop <task>` delegation (ordinary messages stay single-agent), `shop_status`, `shop_patrol`, `shop_dispatch`, `shop_message`, `shop_handoff`; `/shop-status` for manual inspection.
 - `/shop-ui`: read-only dashboard, exact-recipient handoff receipts, new-worktree preparation, delivery/ff-only integration plans, idle-seat model requests, scope/pause/cancel controls, and allowlisted diagnostic export. See [workbench guide](docs/en/WORKBENCH.md).
+- `/shop-reset`: preview and confirm archival of the current tab's early failed setup registration; no pane closure, model/config reset or automatic setup. See [safe reset](docs/en/MIGRATION.md#reset-an-early-failed-setup).
 - `/shop-config`: global/trusted-directory/session model and thinking settings; explicit legacy migration, CAS saves, and Pi-to-Herdr configuration candidates. Existing shops retain pinned launch profiles. Controlled live acceptance remains pending.
 - Existing ticket/binding/checkpoint/review/retry/cleanup core and regression tests.
 - Observed member health across workspaces: present, missing, moved, mismatched, unknown.
