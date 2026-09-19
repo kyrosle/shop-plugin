@@ -105,6 +105,17 @@ def restore(api, start, save, path, state, caller, dry_run=False, plan=None):
     produced by ``core/shutdown.py`` for this exact state revision, so a rebuild can
     never be triggered without a previewed reconciliation.
     """
+    # Initial setup can fail before either seat is recorded, including after a
+    # successful mutation whose reply was rejected. Never invent missing seats
+    # or treat that registration as a complete roster eligible for restoration.
+    lead, workers = state.get('lead'), state.get('workers')
+    if (not isinstance(lead, dict) or not lead.get('pane') or not lead.get('name')
+            or not isinstance(workers, list) or not workers
+            or any(not isinstance(item, dict) or not item.get('pane') or not item.get('name')
+                   for item in workers)):
+        raise RuntimeError('Incomplete setup registration: primary Lead/Worker seats were not fully recorded. '
+                           'No automatic retry. Inspect the saved error and live panes; '
+                           'preview reset from the original Architect before any fresh setup.')
     architect = state['architect']
     if caller['pane_id'] != architect['pane'] or caller.get('agent') != 'pi':
         raise RuntimeError('Focus original Architect Pi before restoring seats')

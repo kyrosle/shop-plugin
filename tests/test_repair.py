@@ -35,6 +35,29 @@ class RepairTests(unittest.TestCase):
     def run_restore(self,dry=False,plan=None):
         return repair.restore(self.api,lambda *a:self.starts.append(a),ct.atomic,self.path,self.state,self.caller,
                               dry, self.plan() if plan is None else plan)
+    def test_incomplete_setup_refuses_before_host_calls_or_state_changes(self):
+        cases = [({}, []), (None, []),
+                 (self.state['lead'], []), (self.state['lead'], [None]),
+                 (self.state['lead'], [{'name': 's-worker'}])]
+        for lead, workers in cases:
+            for dry in (True, False):
+                with self.subTest(lead=lead, workers=workers, dry=dry):
+                    state = copy.deepcopy(self.state)
+                    state.update(phase='partial', workers=copy.deepcopy(workers),
+                                 error='original setup failure')
+                    if lead is None:
+                        state.pop('lead')
+                    else:
+                        state['lead'] = copy.deepcopy(lead)
+                    before = copy.deepcopy(state)
+                    with self.assertRaisesRegex(RuntimeError, 'Incomplete setup registration'):
+                        repair.restore(self.api, lambda *a: self.starts.append(a), ct.atomic,
+                                       self.path, state, self.caller, dry)
+                    self.assertEqual(state, before)
+                    self.assertEqual(self.calls, [])
+                    self.assertEqual(self.starts, [])
+                    self.assertFalse(self.path.exists())
+
     def test_dry_run_no_mutations(self):
         r=self.run_restore(True)
         self.assertEqual(r['restore'],['s-lead','s-worker'])

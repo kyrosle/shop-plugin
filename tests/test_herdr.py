@@ -289,6 +289,29 @@ class RouteSchemaTests(unittest.TestCase):
                 # A bad reply may follow a successful mutation. Never replay it.
                 self.assertEqual(sum(call[0][1:] == route for call in instance.runner.calls), 1)
 
+    def test_pane_rename_returns_validated_pane_info(self):
+        response = fixture('pane-get.json')
+        response['result']['pane']['label'] = 'Architect'
+        route = ('pane', 'rename', 'w5:p4', 'Architect')
+        instance = adapter({route: (0, json.dumps(response), '')})
+        self.assertEqual(instance.rename_pane('w5:p4', 'Architect'),
+                         {'pane': response['result']['pane']})
+        self.assertEqual(sum(call[0][1:] == route for call in instance.runner.calls), 1)
+
+    def test_pane_rename_rejects_untyped_or_malformed_response_without_retry(self):
+        pane = fixture('pane-get.json')['result']['pane']
+        replies = [{'type': 'ok'}, fixture('agent-get.json')['result'],
+                   {'type': 'pane_info'}, {'type': 'pane_info', 'pane': None},
+                   {'type': 'pane_info', 'pane': dict(pane, label=42)},
+                   {'type': 'pane_info', 'pane': dict(pane, unexpected_field=True)}]
+        route = ('pane', 'rename', 'w5:p4', 'Architect')
+        for reply in replies:
+            with self.subTest(reply=reply):
+                instance = adapter({route: (0, json.dumps({'result': reply}), '')})
+                with self.assertRaises(herdr.HerdrSchemaError):
+                    instance.rename_pane('w5:p4', 'Architect')
+                self.assertEqual(sum(call[0][1:] == route for call in instance.runner.calls), 1)
+
     def test_missing_payload_key_refused(self):
         with self.assertRaises(herdr.HerdrSchemaError):
             adapter({('pane', 'get', 'w5:p4'): (0, json.dumps({'result': {'type': 'pane_info'}}), '')}

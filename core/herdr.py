@@ -220,7 +220,7 @@ ROUTES = {
     ('pane', 'layout'): ('layout', ('pane_layout',)),
     ('pane', 'split'): ('pane', ('pane_info', 'pane_created')),
     ('pane', 'close'): (None, ('ok',)),
-    ('pane', 'rename'): (None, ('ok',)),
+    ('pane', 'rename'): ('pane', ('pane_info',)),
     ('pane', 'zoom'): (None, ('ok', 'pane_zoom')),
     ('pane', 'process-info'): ('process_info', ('pane_process_info',)),
     ('agent', 'list'): ('agents', ('agent_list',)),
