@@ -1,4 +1,11 @@
 {
+  "Shop settings": "Shop settings",
+  "Scope: {0}": "Scope: {0}",
+  "Search models or providers…": "Search models or providers…",
+  "No matching models": "No matching models",
+  "Model name: {0}": "Model name: {0}",
+  "↑↓ scroll · Enter choose · Esc back · Clear search to inherit": "↑↓ scroll · Enter choose · Esc back · Clear search to inherit",
+  "Available providers only · Selection changes the Shop draft, not Pi defaults": "Available providers only · Selection changes the Shop draft, not Pi defaults",
   "Global": "Global",
   "Project": "Project",
   "Session": "Session",

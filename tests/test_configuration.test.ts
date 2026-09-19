@@ -3,7 +3,8 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
-import { visibleWidth } from "@earendil-works/pi-tui";
+import { getKeybindings, visibleWidth } from "@earendil-works/pi-tui";
+import { ModelPicker } from "../extensions/model-picker.ts";
 import { ConfigPublisher, SESSION_CONFIG, candidatePath, configCall, configContext, configRequest,
   hash, publishCandidate, removeCandidate, sessionSettings, type ConfigView, type Profiles, SEATS } from "../extensions/configuration.ts";
 import { editConfiguration, settingsPanel, validateModels } from "../extensions/settings-ui.ts";
@@ -66,6 +67,21 @@ async function fixture(fn: (f: any) => Promise<void>) {
   }
 }
 
+function modelDialogs(f: any, steps: any[], pick = "p/model") {
+  f.ctx.ui.select = async () => { throw new Error("Model picker must not use a plain select dialog"); };
+  f.ctx.ui.custom = async (factory: any) => {
+    let result: any;
+    const component = factory({ requestRender() {}, terminal: { rows: 24 } },
+      { fg: (_: string, text: string) => text }, getKeybindings(), (value: any) => { result = value; });
+    if (component instanceof ModelPicker) {
+      component.handleInput(pick);
+      component.handleInput("\r");
+      return result;
+    }
+    return steps.shift();
+  };
+}
+
 test("directory trust and registered main root never follow an auxiliary worktree", async () => fixture(async f => {
   const auxiliary = join(f.root, "auxiliary"); mkdirSync(auxiliary);
   const runtime = join(f.bridge.state_dir, "runtime"); mkdirSync(runtime);
@@ -77,9 +93,7 @@ test("directory trust and registered main root never follow an auxiliary worktre
 }));
 
 test("Python configuration service is consumed by Pi; sparse session save is not a message", async () => fixture(async f => {
-  let n = 0;
-  f.ctx.ui.custom = async () => n++ === 0 ? { type: "edit", seat: "lead", field: "model" } : { type: "save" };
-  f.ctx.ui.select = async () => "p/model";
+  modelDialogs(f, [{ type: "edit", seat: "lead", field: "model" }, { type: "save" }]);
   await editConfiguration(f.pi, f.ctx, f.publisher);
   expect(f.saved).toHaveLength(1);
   expect(f.saved[0].customType).toBe(SESSION_CONFIG);
@@ -89,12 +103,32 @@ test("Python configuration service is consumed by Pi; sparse session save is not
   expect(f.notices.join(" ")).toContain("现有工位未修改");
 }));
 
+test("model picker cancel and inherit never change native Pi model or defaults", async () => fixture(async f => {
+  f.pi.setModel = () => { throw new Error("Must not switch Architect model"); };
+  modelDialogs(f, [{ type: "edit", seat: "lead", field: "model" }, { type: "cancel" }], "\x1b");
+  await editConfiguration(f.pi, f.ctx, f.publisher);
+  expect(f.saved).toHaveLength(0);
+  f.branch(entries(f.root, { models: { seats: { lead: { model: "p/model" } } } }));
+  modelDialogs(f, [{ type: "edit", seat: "lead", field: "model" }, { type: "save" }], "\x1b[A");
+  await editConfiguration(f.pi, f.ctx, f.publisher);
+  expect(f.saved[0].data.overrides).toEqual({});
+}));
+
+test("model removed from catalogue during picker is rejected before draft persistence", async () => fixture(async f => {
+  modelDialogs(f, [{ type: "edit", seat: "lead", field: "model" }, { type: "save" }]);
+  const custom = f.ctx.ui.custom;
+  f.ctx.ui.custom = async (...args: any[]) => {
+    const result = await custom(...args);
+    if (typeof result === "string" && result.startsWith("model:")) f.ctx.modelRegistry.getAvailable = () => [];
+    return result;
+  };
+  await expect(editConfiguration(f.pi, f.ctx, f.publisher)).rejects.toThrow("不可用");
+  expect(f.saved).toHaveLength(0);
+}));
+
 test("scope switching retains drafts; untrusted directory is skipped", async () => fixture(async f => {
   f.trust(false);
-  let n = 0;
-  const results = [{ type: "edit", seat: "worker", field: "model" }, { type: "scope" }, { type: "scope" }, { type: "save" }];
-  f.ctx.ui.custom = async () => results[n++];
-  f.ctx.ui.select = async () => "p/model";
+  modelDialogs(f, [{ type: "edit", seat: "worker", field: "model" }, { type: "scope" }, { type: "scope" }, { type: "save" }]);
   await editConfiguration(f.pi, f.ctx, f.publisher);
   expect(f.saved[0].data.overrides.models.seats.worker.model).toBe("p/model");
   expect(existsSync(join(f.root, ".pi"))).toBe(false);
@@ -102,14 +136,12 @@ test("scope switching retains drafts; untrusted directory is skipped", async () 
 
 test("global and directory saves use CAS and preserve advanced fields", async () => fixture(async f => {
   writeFileSync(join(f.bridge.config_dir, "settings.json"), JSON.stringify({ version: 1, advanced: { keep: true } }));
-  let steps = [{ type: "scope" }, { type: "edit", seat: "lead", field: "model" }, { type: "save" }];
-  f.ctx.ui.custom = async () => steps.shift();
-  f.ctx.ui.select = async () => "p/model";
+  modelDialogs(f, [{ type: "scope" }, { type: "edit", seat: "lead", field: "model" }, { type: "save" }]);
   await editConfiguration(f.pi, f.ctx, f.publisher);
   let saved = JSON.parse(readFileSync(join(f.bridge.config_dir, "settings.json"), "utf8"));
   expect(saved.advanced).toEqual({ keep: true });
   expect(saved.models.seats.lead.model).toBe("p/model");
-  steps = [{ type: "scope" }, { type: "scope" }, { type: "edit", seat: "worker", field: "model" }, { type: "save" }];
+  modelDialogs(f, [{ type: "scope" }, { type: "scope" }, { type: "edit", seat: "worker", field: "model" }, { type: "save" }]);
   await editConfiguration(f.pi, f.ctx, f.publisher);
   saved = JSON.parse(readFileSync(join(f.root, ".pi/shop.json"), "utf8"));
   expect(saved.models.seats.worker.model).toBe("p/model");
@@ -183,6 +215,9 @@ for (const language of ["en", "zh-CN"]) test(`${language} settings actions and n
   const panel = settingsPanel("session", "session:test", view.layers.session.profiles, view, r => results.push(r), () => {}, ["global", "session"], true,
     { label: t => t, value: t => t, description: t => t, hint: t => t, cursor: "›" });
   expect(panel.render(120).join(" ")).toContain(language === "en" ? "Shop settings" : "Shop 设置");
+  expect(panel.render(120)[0]).toStartWith("╭");
+  expect(panel.render(120).at(-1)).toEndWith("╯");
+  expect(panel.render(120).join(" ")).toContain(language === "en" ? "Scope:" : "作用域：");
   for (const width of [4, 12, 40, 80]) for (const line of panel.render(width)) expect(visibleWidth(line)).toBeLessThanOrEqual(width);
   for (const input of ["\t", "s", "r", "\x1b"]) panel.handleInput!(input);
   expect(results.map(r => r.type)).toEqual(["scope", "save", "reset", "cancel"]);

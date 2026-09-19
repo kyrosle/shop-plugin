@@ -11,7 +11,9 @@ Interface language is a personal preference, not a model layer: see [language](L
 Run `/shop-config` inside Herdr Pi. Requires a configured bridge and Pi TUI; it does not call models, dispatch work or open panes.
 
 - Opens the **Session** scope; Tab switches Global / Project / Session.
-- ↑↓ selects a field; Enter opens the model or thinking-level selector.
+- Settings use a titled, bordered panel with scope tabs and a shortcut footer. ↑↓ selects a field; Enter opens the model or thinking-level selector.
+- Model selection has a search input, fuzzy matching across model ID/name/provider, and a fixed viewport of up to 10 rows (smaller on short terminals). ↑↓, PageUp/PageDown and fullscreen mouse wheel scroll results; the selected model name appears below. Enter chooses, Esc/Ctrl+C returns without choosing.
+- Clear model search to access “Inherit parent”. Selection only changes the Shop draft: it does not switch Architect's model, save Pi defaults, refresh providers or call a model. Save/confirmation remains a separate step.
 - Models come from the current Pi's authenticated, available catalogue; thinking choices follow model capabilities.
 - “Inherit parent” removes an override; “Pi default (explicit)” writes `thinking=null`, overriding an explicit parent level.
 - S previews old/new overrides before confirmation; R previews clearing this scope's model group; Esc cancels.

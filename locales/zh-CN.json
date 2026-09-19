@@ -1,4 +1,11 @@
 {
+  "Shop settings": "Shop 设置",
+  "Scope: {0}": "作用域：{0}",
+  "Search models or providers…": "搜索模型或 Provider…",
+  "No matching models": "没有匹配的模型",
+  "Model name: {0}": "模型名称：{0}",
+  "↑↓ scroll · Enter choose · Esc back · Clear search to inherit": "↑↓ 滚动 · Enter 选择 · Esc 返回 · 清空搜索可选继承",
+  "Available providers only · Selection changes the Shop draft, not Pi defaults": "仅显示可用 Provider · 选择只改 Shop 草稿，不改 Pi 默认模型",
   "Global": "全局",
   "Project": "目录",
   "Session": "会话",

@@ -1,8 +1,9 @@
 import { selectAction, t } from "./i18n.js";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import { getSettingsListTheme } from "@earendil-works/pi-coding-agent";
 import { getSupportedThinkingLevels, clampThinkingLevel } from "@earendil-works/pi-ai";
-import { Key, matchesKey, SettingsList, truncateToWidth, type Component, type SettingsListTheme } from "@earendil-works/pi-tui";
+import { Key, matchesKey, SettingsList, type Component, type SettingsListTheme } from "@earendil-works/pi-tui";
+import { panelFrame, type FrameTheme } from "./ui-frame.js";
+import { selectModel } from "./model-picker.js";
 import { readBridge } from "./bridge.js";
 import { configCall, configContext, configRequest, SESSION_CONFIG, SEATS, sessionSettings,
   type ConfigView, type Overrides, type Profiles, type Scope, type Seat, type Thinking,
@@ -16,21 +17,22 @@ type Result = { type: "cancel" | "save" | "reset" | "scope" } | { type: "edit"; 
 /** Uses Pi's SettingsList for navigation/scrolling; outer keys match Curator. */
 export function settingsPanel(scope: Scope, target: string, draft: Profiles, view: ConfigView,
   done: (result: Result) => void, requestRender: () => void, availableScopes: Scope[], existingShop: boolean,
-  listTheme: SettingsListTheme, selectedId?: string): Component {
+  listTheme: SettingsListTheme, selectedId?: string, theme: FrameTheme = { fg: (_color, text) => text }): Component {
   const layer = view.layers[scope];
   const rows = SEATS.flatMap(seat => (["model", "thinking"] as const).map(field => {
     const value = draft[seat][field];
     const changed = value !== layer.profiles[seat][field];
     const source = changed ? t("Draft") : layer.sources[seat][field] ?? t("Built-in");
+    const sourceLabel = SCOPES.includes(source as Scope) ? scopeLabels()[source as Scope] : source;
     return { id: `${seat}:${field}`, label: `${seatLabels()[seat]} · ${field === "model" ? t("Model") : t("Thinking")}`,
-      currentValue: `${value ?? (field === "model" ? t("Not configured") : t("Pi default"))} ← ${source}` };
+      currentValue: `${value ?? (field === "model" ? t("Not configured") : t("Pi default"))} ← ${sourceLabel}` };
   }));
-  // Submenu returns control to the command, which opens Pi's model/effort selector.
+  // Submenu returns control to the command, which opens the draft model/effort picker.
   const list = new SettingsList(rows.map(row => ({ ...row, submenu: () => {
     const [seat, field] = row.id.split(":") as [Seat, "model" | "thinking"];
     done({ type: "edit", seat, field });
     return { render: () => [], invalidate() {} };
-  } })), 8, listTheme, () => {}, () => done({ type: "cancel" }));
+  } })), 8, { ...listTheme, hint: () => "" }, () => {}, () => done({ type: "cancel" }));
   if (selectedId) list.selectItem(selectedId);
   return {
     invalidate() { list.invalidate(); },
@@ -43,12 +45,13 @@ export function settingsPanel(scope: Scope, target: string, draft: Profiles, vie
       requestRender();
     },
     render(width) {
-      const tabs = SCOPES.map(s => !availableScopes.includes(s) ? `${scopeLabels()[s]}×` : s === scope ? `[${scopeLabels()[s]}]` : scopeLabels()[s]).join("  ");
-      return [t("Shop settings · ") + tabs, target,
-        t("Architect: current Pi; change with /model and /thinking"), ...list.render(width),
-        existingShop ? t("Existing Shop snapshots stay unchanged; saves affect new Shops only") : t("Saves affect new Shops only; no panes are opened automatically"),
-        t("Tab scope · Enter edit · S preview save · R reset scope · Esc cancel")]
-        .map(line => truncateToWidth(line, Math.max(0, width)));
+      const tabs = SCOPES.map(s => !availableScopes.includes(s) ? theme.fg("dim", `${scopeLabels()[s]}×`)
+        : s === scope ? theme.fg("accent", `[${scopeLabels()[s]}]`) : scopeLabels()[s]).join("  ");
+      return panelFrame(t("Shop settings"), [t("Scope: {0}", [tabs]), theme.fg("dim", target),
+        theme.fg("muted", t("Architect: current Pi; change with /model and /thinking")), "",
+        ...list.render(Math.max(4, width - 4)).filter(line => line.trim()), "",
+        theme.fg("muted", existingShop ? t("Existing Shop snapshots stay unchanged; saves affect new Shops only") : t("Saves affect new Shops only; no panes are opened automatically")),
+        theme.fg("dim", t("Tab scope · Enter edit · S preview save · R reset scope · Esc cancel"))], width, theme);
     },
   };
 }
@@ -116,7 +119,7 @@ export async function editConfiguration(pi: ExtensionAPI, ctx: ExtensionCommandC
     let detachAbort: (() => void) | undefined;
     let result: Result | undefined;
     try {
-      result = await ctx.ui.custom<Result | undefined>((tui, _theme, _keys, done) => {
+      result = await ctx.ui.custom<Result | undefined>((tui, theme, _keys, done) => {
         let settled = false;
         const finish = (value: Result) => { if (!settled) { settled = true; detachAbort?.(); done(value); } };
         const abort = () => finish({ type: "cancel" });
@@ -124,7 +127,11 @@ export async function editConfiguration(pi: ExtensionAPI, ctx: ExtensionCommandC
         signal.addEventListener("abort", abort, { once: true });
         if (signal.aborted) abort();
         return settingsPanel(scope, target + (view.legacy ? " · legacy：/shop-config migrate" : ""), draft, view,
-          finish, () => tui.requestRender(), scopes, context.existingShop, getSettingsListTheme(), selectedIds[scope]);
+          finish, () => tui.requestRender(), scopes, context.existingShop, {
+            label: (text, selected) => theme.fg(selected ? "accent" : "text", text),
+            value: (text, selected) => theme.fg(selected ? "accent" : "muted", text),
+            description: text => theme.fg("muted", text), hint: text => theme.fg("dim", text), cursor: "› ",
+          }, selectedIds[scope], theme);
       }, { overlay: true, overlayOptions: { width: "85%", maxHeight: "95%", anchor: "center" } });
     } finally { detachAbort?.(); }
     if (!result || result.type === "cancel" || signal.aborted) return;
@@ -135,15 +142,15 @@ export async function editConfiguration(pi: ExtensionAPI, ctx: ExtensionCommandC
       selectedIds[scope] = `${seat}:${field}`;
       const parent = view.layers[scope].parent;
       if (field === "model") {
-        const models = ctx.modelRegistry.getAvailable().map(m => `${m.provider}/${m.id}`).sort();
-        const inherit = t("Inherit parent: {0}", [parent[seat].model ?? t("Not configured")]);
-        const choice = await selectAction(ctx, seatLabels()[seat] + t(" model"),
-          [["inherit", inherit], ...models.map(id => ["model:" + id, id] as const)], { signal });
+        const models = ctx.modelRegistry.getAvailable().map(m => `${m.provider}/${m.id}`);
+        const choice = await selectModel(ctx, { title: seatLabels()[seat] + t(" model"),
+          models: ctx.modelRegistry.getAvailable(), current: draft[seat].model, parent: parent[seat].model }, signal);
         guard();
         if (choice === "inherit") inherited(draft, parent, seat, field);
         else if (choice?.startsWith("model:") && models.includes(choice.slice(6))) {
+          const model = ctx.modelRegistry.getAvailable().find(m => `${m.provider}/${m.id}` === choice.slice(6));
+          if (!model) throw new Error(t("{0} model currently unavailable: {1}", [seatLabels()[seat], choice.slice(6)]));
           draft[seat].model = choice.slice(6);
-          const model = ctx.modelRegistry.getAvailable().find(m => `${m.provider}/${m.id}` === draft[seat].model)!;
           if (draft[seat].thinking != null) draft[seat].thinking = clampThinkingLevel(model, draft[seat].thinking!);
         }
       } else {
