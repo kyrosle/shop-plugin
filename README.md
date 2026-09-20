@@ -271,7 +271,9 @@ npm pack --dry-run
 
 For development, explicitly use `herdr plugin link /absolute/path/to/shop-plugin` and `pi install /absolute/path/to/shop-plugin`. Use a development bridge only in an isolated, inactive environment; do not overwrite an existing installation or enable duplicate role extensions.
 
-Offline tests cover configuration, identity, transport, ticketing, recovery and UI substitutes. They do not establish actual model understanding, collaboration quality or all host interactions. Use a dedicated tab/isolated project for live testing, not an active business workstation. No permanent scheduler, automatic retry or unconditional force-close is provided.
+Offline tests cover configuration, identity, transport, ticketing, recovery and UI substitutes. They do not establish actual model understanding, collaboration quality or all host interactions.
+
+For actual host checks, run `npm run test:host` to inspect the plan, then explicitly `npm run test:host -- --run`. This creates a private Herdr server, real Pi TUI processes, separate HOME/config/state and a throwaway project; no user credentials or existing tabs are used. A local fixture provider tests the model catalog without inference. Failures preserve evidence and return nonzero. The full gate requires both refusal with a live background child and successful idle shutdown; offline green is not host acceptance. See [the test lane, evidence and coverage limits](docs/en/TESTING.md). No permanent scheduler, automatic retry or unconditional force-close is provided.
 
 `private: true` prevents accidental npm publication, not Git installation. Runtime state, sessions, credentials and worktrees are excluded from the package. The project license remains an owner decision; see [LICENSE](LICENSE), [THIRD_PARTY.md](THIRD_PARTY.md) and [LICENSE.pi-intercom](LICENSE.pi-intercom). Third-party licenses do not automatically license the entire project.
 

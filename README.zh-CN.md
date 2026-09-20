@@ -271,7 +271,9 @@ npm pack --dry-run
 
 开发时可显式 `herdr plugin link /absolute/path/to/shop-plugin` 和 `pi install /absolute/path/to/shop-plugin`。只在隔离、非活动环境使用开发 bridge；不要覆盖现有安装或启用两份角色扩展。
 
-离线测试涵盖配置、身份、传输、工单、恢复及 UI 替身；不证明真实模型理解、协作质量或所有宿主交互正确。现场测试应使用专门 tab/隔离项目，别拿活动业务工位试错。没有永久调度器、自动重试或无条件强制关闭。
+离线测试涵盖配置、身份、传输、工单、恢复及 UI 替身；不证明真实模型理解、协作质量或所有宿主交互正确。
+
+真实宿主检查先执行 `npm run test:host` 查看计划，再显式 `npm run test:host -- --run`。跑道创建私有 Herdr 服务、真实 Pi TUI、独立 HOME/配置/状态及临时项目，不使用用户凭据或现有 tab。本地测试 Provider 仅用于模型目录，不发生推理；失败保留证据并返回非零。完整门禁同时要求“后台子进程存活时拒绝收工”和“空闲时成功收工”；离线全绿不等于宿主验收通过。 参见[测试跑道、证据与覆盖边界](docs/zh-CN/TESTING.md)。没有永久调度器、自动重试或无条件强制关闭。
 
 `private: true` 防止误发 npm，不影响 Git 安装。包不含运行状态、会话、凭据或 worktree。项目许可证尚待所有者决定；参见 [LICENSE](LICENSE)、[THIRD_PARTY.md](THIRD_PARTY.md) 和 [LICENSE.pi-intercom](LICENSE.pi-intercom)，不要假定第三方许可证自动适用于整个项目。
 

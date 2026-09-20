@@ -1,0 +1,46 @@
+name: Real host gate
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  real-host:
+    # Dedicated, trusted/disposable runner only. Never run untrusted PR code here.
+    runs-on: [self-hosted, macOS, shop-host-tests]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: npm ci --ignore-scripts
+      - run: npm run typecheck
+      - name: Real Herdr and Pi lifecycle (not a mock)
+        id: host
+        shell: bash
+        run: |
+          set +e
+          python3 tests/host/run.py --run 2>&1 | tee "$RUNNER_TEMP/shop-host-run.log"
+          status=${PIPESTATUS[0]}
+          set -e
+          artifacts=$(awk '/^Artifacts: / {print substr($0, 12)}' "$RUNNER_TEMP/shop-host-run.log" | tail -1)
+          printf 'artifacts=%s\n' "$artifacts" >> "$GITHUB_OUTPUT"
+          exit "$status"
+      - name: Preserve invocation evidence
+        if: always() && steps.host.outputs.artifacts != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: real-host-evidence
+          path: ${{ steps.host.outputs.artifacts }}
+          include-hidden-files: true
+          retention-days: 7
+      - name: Preserve preflight output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: real-host-console
+          path: ${{ runner.temp }}/shop-host-run.log
+          if-no-files-found: ignore
+          retention-days: 7

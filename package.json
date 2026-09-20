@@ -28,6 +28,7 @@
     "docs/en/WORKBENCH.md",
     "docs/en/WORKFLOW.md",
     "docs/en/LANGUAGE.md",
+    "docs/en/TESTING.md",
     "docs/zh-CN/ARCHITECTURE.md",
     "docs/zh-CN/INSTALLATION.md",
     "docs/zh-CN/MIGRATION.md",
@@ -35,6 +36,7 @@
     "docs/zh-CN/WORKBENCH.md",
     "docs/zh-CN/WORKFLOW.md",
     "docs/zh-CN/LANGUAGE.md",
+    "docs/zh-CN/TESTING.md",
     "config",
     "herdr-plugin.toml",
     "README.md",
@@ -45,7 +47,8 @@
   ],
   "scripts": {
     "test": "PYTHONPATH=core python3 -m unittest discover -s tests -p 'test_*.py' && bun test tests",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:host": "python3 tests/host/run.py"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "^0.85.1",

@@ -134,9 +134,14 @@ binding, process, transport, handoff and layout facts, an expiry and a state dig
 Execution revalidates the plan and refuses drift.
 
 A bound run, active or unknown member, identity mismatch, missing process facts or
-unresolved transport/handoff blocks shutdown. Herdr protocol 22 exposes foreground
-processes but not a complete background-job list: `background_state_unknown` remains
-a blocker, not a claim of safety.
+unresolved transport/handoff blocks shutdown. Herdr protocol 22 supplies foreground
+facts; `core/processes.py` adds local Unix peer identity and two stable metadata
+snapshots on macOS for descendants/session/tty/group membership (Linux's process
+visibility still requires separate host validation). Only the verified direct
+Pi is exempted. Process-instance changes invalidate plans, and original shell/Pi
+exit is verified after pane close. Missing evidence remains
+`background_state_unknown`. This is pane-scoped observation, not proof that fully
+detached external services or all repository writers have stopped.
 
 Execution journals archive, per-target close, verified absence, final checks and receipt
 before removing registration. Architect is retained. Failure preserves `shutdown_partial`

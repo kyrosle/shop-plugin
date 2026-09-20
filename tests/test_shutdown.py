@@ -118,7 +118,11 @@ class ShutdownApi:
 
 
 def proven_processes(api, pane_id):
-    """Process probe with descendant proof (the shape a capable Herdr would give)."""
+    """Offline state-machine seam only; NOT evidence that real shutdown works.
+
+    Production process observations are covered separately in test_processes.py
+    and the opt-in real-host lane, which never injects this proof.
+    """
     facts = sd.process_facts(api, pane_id)
     facts['background_proven'] = True
     facts['source'] = 'test_double_with_descendant_proof'
@@ -756,3 +760,73 @@ class FinalizationTests(ShutdownBase):
                                authority={'kind': sd.AUTHORITY, 'action_id': 'a'}, repo=str(self.repo),
                                process_probe=proven_processes)
         self.assertEqual(follow_up['decision'], 'recovery_required')
+
+
+class ProcessIncarnationTests(ShutdownBase):
+    def setUp(self):
+        super().setUp()
+        exited = mock.patch('processes.wait_exited', return_value=True)
+        self.exited = exited.start()
+        self.addCleanup(exited.stop)
+
+    def incarnation(self, api, pane, generation):
+        facts = proven_processes(api, pane)
+        facts['pi_pid'] = facts['shell_pid'] + int(pane[-1])
+        facts['process_scope'] = {'anchor': {str(pid): {'pid': pid, 'start': generation}
+                                           for pid in (facts['shell_pid'], facts['pi_pid'])}}
+        return facts
+
+    def test_replaced_pi_after_preview_requires_new_plan_and_zero_closes(self):
+        self.write_state()
+        api = self.api_for()
+        generation = ['first']
+        def probe(api, pane):
+            return self.incarnation(api, pane, generation[0])
+        plan = self.preview(api=api, process_probe=probe)
+        self.assertEqual(plan['decision'], 'ready')
+        generation[0] = 'replacement'
+        with self.assertRaises(sd.ShutdownRefused) as error:
+            sd.execute(api, self.state_path, plan, process_probe=probe)
+        self.assertEqual(error.exception.code, 'plan_stale')
+        self.assertEqual(self.close_calls(api), [])
+        self.assertEqual(json.loads(self.state_path.read_text())['phase'], 'ready')
+
+    def test_process_replacement_after_first_close_stops_remaining_closes(self):
+        self.write_state()
+        generation = ['first']
+        def after_close(_pane):
+            generation[0] = 'replacement'
+        api = self.api_for(close_effect=after_close)
+        def probe(api, pane):
+            return self.incarnation(api, pane, generation[0])
+        plan = self.preview(api=api, process_probe=probe)
+        result = sd.execute(api, self.state_path, plan, process_probe=probe)
+        self.assertEqual(len(self.close_calls(api)), 1)
+        self.assertEqual(result['decision'], 'recovery_required')
+        self.assertIn('process_uncertain', [b['code'] for b in result['blockers']])
+        self.assertEqual(json.loads(self.state_path.read_text())['phase'], 'shutdown_partial')
+
+    def test_pane_absence_without_process_exit_is_partial_not_success(self):
+        self.write_state()
+        api = self.api_for()
+        self.exited.return_value = False
+        def probe(api, pane):
+            return self.incarnation(api, pane, 'first')
+        plan = self.preview(api=api, process_probe=probe)
+        result = sd.execute(api, self.state_path, plan, process_probe=probe)
+        self.assertEqual(result['decision'], 'recovery_required')
+        self.assertEqual(len(self.close_calls(api)), 1)
+        self.assertIn('process_exit_unverified', [b['code'] for b in result['blockers']])
+        self.assertTrue(self.state_path.exists())
+
+    def test_extra_background_overrides_any_claim_of_proof(self):
+        self.write_state()
+        api = self.api_for()
+        def probe(api, pane):
+            facts = proven_processes(api, pane)
+            facts['extra_background'] = [{'pid': 99999}]
+            return facts
+        plan = self.preview(api=api, process_probe=probe)
+        self.assertEqual(plan['decision'], 'blocked')
+        self.assertIn('background_work', [b['code'] for b in plan['blockers']])
+        self.assertEqual(self.close_calls(api), [])

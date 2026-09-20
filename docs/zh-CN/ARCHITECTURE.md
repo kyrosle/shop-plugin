@@ -90,7 +90,7 @@ launch、terminal、Pi session 是不同身份。transport epoch 属于短期 en
 
 执行收工的权威是独立 Herdr 用户操作宿主。agent 工具只能看预览，没有强制关闭能力。计划包含身份、绑定、进程、transport/handoff、布局事实、时效与状态摘要；执行复检，变化则拒绝。
 
-绑定 run、active/unknown 成员、身份冲突、缺失进程事实、未决消息/接手均阻止收工。Herdr 协议 22 只暴露前台进程，没有完整后台作业清单，`background_state_unknown` 是阻塞而非安全证明。
+绑定 run、active/unknown 成员、身份冲突、缺失进程事实、未决消息/接手均阻止收工。Herdr 协议 22 提供前台事实；`core/processes.py` 在 macOS 通过本地 Unix 对端身份与两次稳定的元数据快照核验 pane 后代、会话、终端及进程组，仅豁免核实后的直接 Pi。进程实例变化使计划失效，关闭后核实原 shell/Pi 退出。证据不足仍报 `background_state_unknown`。这是 pane 范围观测，不证明完全脱离 pane 的独立服务或所有仓库写入者均已停止。
 
 操作日志依次记录归档、逐目标关闭及缺失验证、最终检查、回执，最后移除登记；Architect 保留。失败保留 `shutdown_partial` 和剩余名单。恢复计划只读，恢复执行另需显式操作；不自动 unbind、验收或删除代码、worktree、会话。参见[迁移与回退](MIGRATION.md)。
 

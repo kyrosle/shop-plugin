@@ -201,8 +201,8 @@ agent 只能 `herdr-shop shutdown --preview`、`herdr-shop recovery` 诊断，�
 执行复检全部事实，变化即拒绝；日志顺序为归档 → shutdown_closing → 逐目标缺失验证 → 最终验证 → 回执/tombstone → 移除登记。调用方执行 pane 最后关闭，Architect 保留并核实。
 
 以下均失败拒绝：绑定/未完成票、partial/removing/resetting/shutdown_*、active/blocked/unknown、缺失/移动/替换/重复/身份冲突成员、未核实 Architect、外来 pane、坏/超大状态、过期计划、transport unknown/pending、未完接手、前台工作、缺失进程事实、background_state_unknown。
-Herdr 协议 22 无完整后台/后代进程清单，能力缺失须报告，不推定停止。失败留 shutdown_partial 和剩余名单，不发成功通知。
-重复关闭只有匹配回执且已核实目标缺失才返回 already_closed，否则 unknown 且不操作。
+Herdr 协议 22 无后台清单；本地 Unix 对端身份与两次稳定的 macOS 元数据快照补充核验 pane 后代、会话、终端及进程组。额外进程报 background_work；证据缺失或变化仍阻塞。仅豁免核实后的直接 Pi，不豁免任意 Node。进程实例变化使计划失效，关闭 pane 后还须核实原 shell/Pi 退出。此检查不证明完全脱离 pane 的独立服务或所有仓库写入者已停止，不能代替集成前的停写核验。失败留 shutdown_partial 和剩余名单，不发成功通知。
+核心规划器只有匹配回执且已核实目标缺失才返回 already_closed，否则 unknown 且不操作。当前原生 CLI 会在进入回执检查前拒绝缺失登记，因此重复关闭不修改状态，但尚不返回成功的 already_closed 回执。
 
 recovery 对部分存活、移动、服务器重启、混合布局生成只读协调计划：分类成员、列显示建议，不恢复、改派、重放、关闭或删除。
 实际恢复须匹配未过期计划，并由 Architect 显式执行独立 dry-run/归档流程。切换与回退见[迁移](MIGRATION.md)。

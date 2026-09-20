@@ -69,6 +69,7 @@ class PluginTests(unittest.TestCase):
                 'plugin.py': 'subprocess.run([sys.executable',
                 'run.py': "subprocess.check_output(['git'",
                 'shop.py': 'subprocess.run(argv',
+                'processes.py': "subprocess.run(['/bin/ps',",
             }.get(path.name)
             segments = [ast.get_source_segment(source, call) or '' for call in subprocess_calls]
             if allowed_prefix is None:
@@ -76,6 +77,13 @@ class PluginTests(unittest.TestCase):
                     offenders.append(f'{path.name}: unexpected subprocess calls {segments}')
             elif len(segments) != 1 or not segments[0].startswith(allowed_prefix):
                 offenders.append(f'{path.name}: subprocess boundary changed: {segments}')
+            if path.name == 'processes.py' and len(subprocess_calls) == 1:
+                call = subprocess_calls[0]
+                self.assertEqual(ast.literal_eval(call.args[0]),
+                                 ['/bin/ps', '-axo', 'pid=,ppid=,pgid=,uid=,tty=,lstart=,comm='])
+                self.assertEqual({kw.arg: ast.literal_eval(kw.value) for kw in call.keywords},
+                                 {'capture_output': True, 'text': True, 'timeout': 3,
+                                  'env': {'PATH': '/usr/bin:/bin', 'LC_ALL': 'C'}})
             if path.name == 'shop.py':
                 for node in ast.walk(tree):
                     if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) \

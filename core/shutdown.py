@@ -14,8 +14,10 @@ Safety rules enforced here (fail closed):
 * any active/unknown/blocked member, identity drift, missing/moved/replaced/duplicate
   member, extra or unregistered pane, unreadable/oversized state, stale plan or
   transport/handoff uncertainty blocks with zero closes;
-* process facts must be available; if Herdr cannot prove background jobs stopped the
-  plan reports ``background_state_unknown`` instead of claiming safe closure;
+* process facts must be available: native identity plus two stable local Unix
+  snapshots cover the pane's descendants/session/tty/group. Missing visibility
+  reports ``background_state_unknown``; independent detached services are not
+  certified stopped and shutdown never finishes/unbinds a run;
 * every mutation is journaled (archive -> phase ``shutdown_closing`` -> per-target
   verified completion -> tombstone) and a failure leaves ``shutdown_partial``;
 * nothing here deletes tickets, worktrees, sessions, credentials or unknown panes,
@@ -33,6 +35,7 @@ import secrets
 import contracts as ct
 import herdr
 import identity
+import processes
 
 PLAN_SCHEMA = 1
 RECEIPT_SCHEMA = 1
@@ -186,23 +189,72 @@ def read_state(state_path):
     return data
 
 
-def process_facts(api, pane_id):
-    """Process evidence for one pane. Background proof is explicit, never assumed."""
-    try:
+def process_facts(api, pane_id, expected=None):
+    """Bracket local process snapshots with native identity/foreground reads.
+
+    Herdr 22 has no background list. Local kernel peer + process/session/tty
+    metadata supplies that missing *pane-scoped* observation; idle alone never
+    supplies it. Missing, changing or unsupported evidence still refuses close.
+    """
+    facts = {'pane_id': pane_id, 'available': False, 'background_proven': False,
+             'extra_foreground': [], 'extra_background': [], 'shell_pid': None,
+             'source': 'herdr_pane_process_info'}
+    def read_info():
         info = herdr.process_info_record(api('pane', 'process-info', '--pane', pane_id)['process_info'],
                                          'shutdown process-info')
+        if info.get('pane_id') != pane_id:
+            raise processes.ProcessUncertain('process-info belongs to another pane')
+        return info
+    def read_agent():
+        agent = herdr.agent_record(api('agent', 'get', pane_id)['agent'], 'shutdown process agent')
+        keys = ('pane_id', 'tab_id', 'terminal_id', 'name', 'agent', 'agent_status', 'state_change_seq')
+        if (agent.get('pane_id') != pane_id or agent.get('agent') != 'pi'
+                or not agent.get('name') or not agent.get('terminal_id')
+                or agent.get('agent_status') not in ('idle', 'done')):
+            raise processes.ProcessUncertain('foreground Pi identity/status not verified')
+        if expected and (agent['name'] != expected.get('name')
+                         or agent['terminal_id'] != expected.get('terminal_id')):
+            raise processes.ProcessUncertain('registered Pi identity changed')
+        return {key: agent.get(key) for key in keys}
+    try:
+        info = read_info()
+        shell_pid = info.get('shell_pid')
+        foreground = list(info.get('foreground_processes') or [])
+        facts.update(available=True, shell_pid=shell_pid, foreground=foreground,
+                     extra_foreground=[p for p in foreground if p.get('pid') != shell_pid])
+        if (type(shell_pid) is not int or shell_pid <= 1
+                or type(info.get('foreground_process_group_id')) is not int
+                or info['foreground_process_group_id'] <= 1):
+            raise processes.ProcessUncertain('missing shell/foreground group identity')
+        candidates = [p for p in foreground if p.get('argv0') and Path(p['argv0']).name == 'pi'
+                      and p.get('name') in ('pi', 'node', 'bun') and type(p.get('pid')) is int]
+        if len(candidates) != 1 or candidates[0]['pid'] <= 1:
+            raise processes.ProcessUncertain('no unique foreground Pi process')
+        agent = read_agent()
+        pi_pid = candidates[0]['pid']
+        facts['extra_foreground'] = [p for p in foreground if p.get('pid') not in (shell_pid, pi_pid)]
+        server_pid = processes.local_server_pid()
+        before = processes.pane_scope(processes.snapshot(), info, pi_pid, server_pid)
+        after = processes.pane_scope(processes.snapshot(), info, pi_pid, server_pid)
+        if before != after or read_info() != info or read_agent() != agent or processes.local_server_pid() != server_pid:
+            raise processes.ProcessUncertain('process or host identity changed during inspection')
+        facts.update(pi_pid=pi_pid, server_pid=server_pid, agent_identity=agent,
+                     extra_foreground=[p for p in foreground if p.get('pid') not in (shell_pid, pi_pid)],
+                     extra_background=[p for p in after['extra'] if p['pid'] not in {p['pid'] for p in foreground}],
+                     background_proven=not after['extra'], process_scope=after,
+                     source='herdr_and_local_unix_process_snapshot',
+                     scope='current shell descendants, POSIX session, tty and foreground group')
     except Exception as error:
-        return {'pane_id': pane_id, 'available': False, 'error': str(error)[:200],
-                'background_proven': False, 'extra_foreground': [], 'shell_pid': None}
-    foreground = list(info.get('foreground_processes') or [])
-    shell_pid = info.get('shell_pid')
-    extra = [item for item in foreground if item.get('pid') != shell_pid]
-    # Herdr protocol 22 exposes foreground processes only; there is no descendant or
-    # background job list, so background proof cannot be derived and stays false.
-    return {'pane_id': pane_id, 'available': True, 'shell_pid': shell_pid,
-            'foreground': foreground, 'extra_foreground': extra,
-            'background_proven': bool(info.get('descendants')),
-            'source': 'herdr_pane_process_info'}
+        facts['error'] = str(error)[:200]
+        # Never turn an inspection failure into proof of an idle pane.
+        facts['background_proven'] = False
+    return facts
+
+
+def _probe_processes(probe, api, state, pane):
+    if probe is process_facts:
+        return probe(api, pane, expected=_member_by_pane(state, pane))
+    return probe(api, pane)  # explicit offline state-machine test seam
 
 
 def _binding_blocker(state):
@@ -491,7 +543,7 @@ def _close_order(state, executable, caller_pane, probe, api):
     ranks = {'auxiliary_lead': 0, 'worker': 1, 'lead': 2}
     ordered = sorted(executable, key=lambda row: (ranks.get(row['role'], 3), str(row['name'])))
     for row in ordered:
-        facts = probe(api, row['pane'])
+        facts = _probe_processes(probe, api, state, row['pane'])
         process_rows.append(facts)
         if not facts.get('available'):
             blockers.append({'code': 'process_uncertain', 'owner': row.get('owner'),
@@ -504,12 +556,17 @@ def _close_order(state, executable, caller_pane, probe, api):
                                        % (row['name'], [item.get('pid') for item in facts['extra_foreground']][:5]),
                              'next': 'stop or finish that work; shutdown never kills processes'})
             continue
+        if facts.get('extra_background'):
+            blockers.append({'code': 'background_work', 'owner': row.get('owner'),
+                             'detail': 'member %s has additional pane-scoped processes (pids %s)'
+                                       % (row['name'], [p['pid'] for p in facts['extra_background']][:5]),
+                             'next': 'finish or explicitly stop that work; shutdown never kills processes'})
+            continue
         if not facts.get('background_proven'):
             blockers.append({'code': 'background_state_unknown', 'owner': row.get('owner'),
-                             'detail': 'Herdr protocol %s exposes no descendant/background job list for %s'
-                                       % (herdr.PROTOCOL, row['name']),
-                             'next': 'verify the pane has no background jobs manually; capability gap, '
-                                     'never assume stopped'})
+                             'detail': 'cannot verify pane-scoped processes for %s: %s'
+                                       % (row['name'], facts.get('error') or 'missing process evidence'),
+                             'next': 'restore local process visibility and inspect the evidence; never assume stopped'})
             continue
         order.append({'pane': row['pane'], 'name': row['name'], 'role': row['role'],
                       'caller': row['pane'] == caller_pane})
@@ -609,7 +666,15 @@ def revalidate(api, state_path, plan, process_probe=None, transport_summary=None
                               'revalidation decision is ' + str(fresh.get('decision')))
     if [item['pane'] for item in fresh.get('close_order') or []] != [item['pane'] for item in plan.get('close_order') or []]:
         raise ShutdownRefused('plan_stale', 'close order or members changed; new plan required')
+    if _process_anchors(fresh) != _process_anchors(plan):
+        raise ShutdownRefused('plan_stale', 'server/shell/Pi process incarnation changed')
     return fresh
+
+
+def _process_anchors(plan):
+    return {row['pane_id']: row.get('process_scope', {}).get('anchor')
+            for row in plan.get('facts', {}).get('process', [])}
+
 
 
 def execute(api, state_path, plan, process_probe=None, transport_summary=None, handoff_summary=None,
@@ -650,8 +715,10 @@ def execute(api, state_path, plan, process_probe=None, transport_summary=None, h
                                         allowed_status=('idle', 'done'), require_terminal=True)
         except Exception as error:
             return _partial(state_path, journal, result, state, item, 'identity_drift', str(error))
-        facts = (process_probe or process_facts)(api, item['pane'])
-        if not facts.get('available') or facts.get('extra_foreground') or not facts.get('background_proven'):
+        facts = _probe_processes(process_probe or process_facts, api, state, item['pane'])
+        if (not facts.get('available') or facts.get('extra_foreground')
+                or facts.get('extra_background') or not facts.get('background_proven')
+                or facts.get('process_scope', {}).get('anchor') != _process_anchors(fresh).get(item['pane'])):
             return _partial(state_path, journal, result, state, item, 'process_uncertain',
                             'process facts changed before close')
         del resolved
@@ -663,6 +730,14 @@ def execute(api, state_path, plan, process_probe=None, transport_summary=None, h
         if not verification['absent']:
             return _partial(state_path, journal, result, state, item, 'still_present',
                             verification.get('error') or 'pane still enumerated after close')
+        anchors = facts.get('process_scope', {}).get('anchor')
+        if anchors:
+            try:
+                targets = {pid: anchors[str(pid)] for pid in {facts['shell_pid'], facts['pi_pid']}}
+                if not processes.wait_exited(targets):
+                    raise processes.ProcessUncertain('pane absent but original shell/Pi still running')
+            except Exception as error:
+                return _partial(state_path, journal, result, state, item, 'process_exit_unverified', str(error))
         journal['pending_shutdown']['completed'].append({'pane': item['pane'], 'name': item['name'],
                                                          'closed_at': stamp(now)})
         ct.atomic(state_path, journal)

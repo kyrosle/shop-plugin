@@ -197,12 +197,19 @@ Fail-closed blockers include: bound run/outstanding tickets, phase
 moved/replaced/duplicate/identity-mismatched members, an unverified Architect,
 unregistered panes in the managed tab, unreadable/oversized/invalid state,
 stale or expired plans, transport `unknown`/`pending`, open handoffs, foreground
-work, unavailable process facts, and `background_state_unknown` (Herdr protocol
-22 exposes no descendant/background list; the plan reports the gap instead of
-assuming jobs stopped). A failure stops as `shutdown_partial` with the remaining
-roster and never notifies success. A repeated close returns `already_closed`
+work, observed `background_work`, unavailable process facts, and
+`background_state_unknown`. Herdr protocol 22 lacks a background list; local
+Unix peer identity and two stable macOS metadata snapshots supplement it for the
+pane's descendants/session/tty/group. Missing or changing evidence blocks.
+Only a verified direct Pi is exempted, not arbitrary Node processes. Process
+incarnation changes invalidate plans; original shell/Pi exit is verified after
+pane close. This does not certify fully detached external services or repository
+writers stopped; worktree integration still requires its own writer checks. A failure stops as `shutdown_partial` with the remaining
+roster and never notifies success. The core planner can return `already_closed`
 only when the receipt matches and the closed panes are verified absent;
-otherwise `unknown` and nothing is touched.
+otherwise it returns `unknown`. The native CLI currently rejects a missing
+registration before reaching this receipt check; repeated close does not mutate
+state but is not yet a successful `already_closed` acknowledgement.
 
 Recovery: `herdr-shop recovery` (and the `recovery` plugin action) produces one
 read-only reconciliation plan for partial, moved, server-restart and
