@@ -6,6 +6,8 @@ from pathlib import Path
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
+import lifecycle
 
 import contracts as ct
 import coordination as co
@@ -17,6 +19,11 @@ from workbench import Workbench, operation_error
 
 class WorkbenchTests(unittest.TestCase):
     def setUp(self):
+        # Process/session ownership is exercised end-to-end in test_lifecycle;
+        # this fixture tests business authorization with a verified live owner.
+        gate = patch.object(lifecycle, 'require_current')
+        self.live_owner = gate.start()
+        self.addCleanup(gate.stop)
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)
         self.root = Path(temp.name)
@@ -42,6 +49,11 @@ class WorkbenchTests(unittest.TestCase):
         co.bind(self.api, ct.atomic, self.state_path, self.state, {'pane_id': 'p1'}, self.rid)
         for member in members:
             self.endpoint(member)
+
+    def test_live_owner_failure_blocks_business_authorization(self):
+        self.live_owner.side_effect = RuntimeError('Architect session changed')
+        with self.assertRaisesRegex(RuntimeError, 'session changed'):
+            self.wb().authorize()
 
     def endpoint(self, member, session=None):
         key = hashlib.sha256(json.dumps(['s1', member['name']], separators=(',', ':')).encode()).hexdigest()

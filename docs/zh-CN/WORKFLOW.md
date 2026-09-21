@@ -24,6 +24,18 @@
 
 没有 shop_id 的旧工位须先安全 reset/reopen；不静默转换未管理 Markdown run，也不视作完成。从辅助 worktree 调用时始终传 `shop-run --repo /absolute/main/repo`。
 
+### 临时 Shop 生命周期
+
+tab 是查找槽位，不是永久授权。每次新开工生成独立 `shop_id`，固定本地 Herdr 进程实例、socket/tab、Architect pane/terminal、规范化项目路径与 Pi session；同时记录成员 shell/Pi 的进程实例。同一会话 `/reload` 可以继续，换会话、目录、终端或服务实例则必须重新核验归属。
+
+旧 JSON 中的 `ready` 不构成授权。`recovery_required`、旧版归属、成员缺失/移动/替换、绑定不一致均阻止委托。`/shop` 在发送模型请求前实时核验宿主、进程与绑定；状态栏只有最近一次核验成功才显示 ready，缓存不能授权派送。身份租约过期只代表**未知**，不代表进程已退出。
+
+健康 Shop 再开工只复用，不重启成员。显式开工仅可自动归档**同槽位、从未使用任务**的孤立登记，且前后两次核验一致：无 run、任务使用历史/绑定或待处理操作；布局仅剩当前 Architect；全局宿主清单无旧成员；登记的成员进程及会话/进程组/终端范围均无残留。早期仅 Architect 的建站失败可能满足条件。split/start 结果不明、旧版或缺失证据、成员存活/迁移、任何状态变化均阻塞。移除前私有归档登记的原始字节；归档失败保留原件。普通开工不再自动续启 partial 成员。
+
+这些元数据证据仅限 pane 范围，不代表整个仓库所有写入者已停止。超时、换会话、心跳都不会自行删除；不会凭相同目录扫除其他 tab 的登记。用过任务的 Shop 要显式恢复/收工，不自动协调 run。正常用户收工沿用既有核验、关闭及回执流程。票据（含取消票）、未知传输日志、报告、worktree、旧会话始终保留。端点声明由所属 Pi 移除或失效；保留的声明也不能绕过当前登记和 epoch 核验。
+
+`--models-file` 只覆盖模型配置，**不绕过** Architect 会话归属，仍需新鲜 Pi candidate。进程元数据不可核实时拒绝；当前本地进程实现仅支持 macOS。详见[测试边界](TESTING.md)。
+
 ## 2. 可复现开发基线
 
 development 票要求精确 40/64 字符 base SHA、同 Git common 仓库的 worktree 根、干净 worktree（不计 `.shop` 协调文件）、HEAD 等于 base、非空 checks。创建和派单均校验。

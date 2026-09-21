@@ -118,11 +118,26 @@ def execute(api, path, caller, expected):
     raw = read_file(path)
     if raw is None or digest(raw) != fresh['state_revision']:
         raise RuntimeError('Registration changed; nothing reset')
+    archive = archive_registration(path, raw, expected)
+    # Recheck live identity, layout, binding and exact bytes after backup. On
+    # failure both original registration and backup remain; never retry writes.
+    if plan(api, path, caller).get('token') != expected or read_file(path) != raw:
+        raise RuntimeError('Reset facts changed; registration retained. Backup: ' + str(archive))
+    path.unlink()
+    return {'schema': 1, 'decision': 'archived', 'archive': str(archive),
+            'state_revision': fresh['state_revision'], 'pane': caller['pane'],
+            'tab': caller['tab'], 'closes_panes': 0, 'starts_members': 0}
+
+
+def archive_registration(path, raw, token):
+    """Durable exact-byte backup, shared by reset and checked orphan retirement."""
+    if not re.fullmatch(r'[a-f0-9]{64}', token):
+        raise RuntimeError('Invalid archive token')
     archive_dir = path.parent.parent / 'reset-archive'
     if archive_dir.is_symlink():
         raise RuntimeError('Symlink archive directory refused')
     archive_dir.mkdir(mode=0o700, exist_ok=True)
-    archive = archive_dir / (path.stem + '-' + expected + '.json')
+    archive = archive_dir / (path.stem + '-' + token + '.json')
     # Exclusive creation preserves evidence after uncertain/partial outcomes.
     # Flush backup and its directory before removing the active registration.
     archive_fd = os.open(archive, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
@@ -135,14 +150,7 @@ def execute(api, path, caller, expected):
         os.fsync(fd)
     finally:
         os.close(fd)
-    # Recheck live identity, layout, binding and exact bytes after backup. On
-    # failure both original registration and backup remain; never retry writes.
-    if plan(api, path, caller).get('token') != expected or read_file(path) != raw:
-        raise RuntimeError('Reset facts changed; registration retained. Backup: ' + str(archive))
-    path.unlink()
-    return {'schema': 1, 'decision': 'archived', 'archive': str(archive),
-            'state_revision': fresh['state_revision'], 'pane': caller['pane'],
-            'tab': caller['tab'], 'closes_panes': 0, 'starts_members': 0}
+    return archive
 
 
 def request(api, root, payload, env):

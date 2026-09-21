@@ -18,6 +18,7 @@ import coordination as co
 import handoff
 import identity
 import locking
+import lifecycle
 import settings
 import snapshot
 import transport
@@ -54,8 +55,9 @@ class Workbench:
         self.rid = self.state.get('run_id')
 
     def authorize(self, controller=False, primary=False):
-        if self.state.get('phase') != 'ready':
+        if self.state.get('phase') != 'ready' or self.state.get('recovery_required'):
             raise RuntimeError('Ready Shop required; inspect/recover registration first')
+        lifecycle.require_current(self.api, self.state, self.state_path.parent.parent)
         identity.resolve(self.api, self.actor, self.state['tab'], require_terminal=True, require_status=False)
         if controller and self.actor['name'] not in (self.state['architect']['name'], self.state['lead']['name']):
             raise RuntimeError('Architect or primary Lead required')

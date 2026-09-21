@@ -21,6 +21,8 @@ def repo_lock(repo):
 
 
 def caller_control(api, state, caller, primary_only=False):
+    if state.get('recovery_required'):
+        raise RuntimeError('Shop requires recovery; control refused')
     controllers = [state['lead']] if primary_only else [state['architect'], state['lead']]
     item = next((a for a in controllers if a['pane'] == caller['pane_id']), None)
     if not item:
@@ -65,6 +67,7 @@ def bind(api, save, path, state, caller, rid):
         identity.resolve(api, item, state['tab'], allowed_status=herdr.SETTLED_STATUSES,
                          where='member ' + str(item.get('name')))
     state['run_id'] = rid
+    state['has_run_history'] = True  # Unbind must not erase evidence needed by orphan cleanup.
     registry[rid] = {'shop_id': state['shop_id'], 'tab': state['tab'], 'lead': state['lead'],
                      'state_path': str(path), 'bound_at': ct.stamp()}
     # Registry first: fail closed against GC if second write fails.

@@ -55,6 +55,12 @@ The current native CLI rejects a repeated close after registration removal (nonz
 
 Bound-run broker traffic, dispatch → acceptance → delivery, worktree integration, real-model collaboration quality and visual screenshot comparison are **not covered yet**. This lane is the host-lifecycle foundation, not evidence of a complete model collaboration loop.
 
+### Offline lifecycle and production-client checks
+
+`tests/test_lifecycle.py` exercises real core/adapter/candidate-file logic with substituted native replies and OS process metadata: session/lease/process-incarnation fencing, moved/busy members, unused orphan archival, private exact-byte backups, backup failure and changed preimages. `test_setup_adapter.py` also covers safe archival of an early Architect-only failure; unknown split/start outcomes retain partial evidence. Workbench business tests substitute the verified-owner gate; they do not independently prove live lifecycle ownership.
+
+Bun command tests assert no model request on failed preflight or session drift. `transport_harness.test.ts` connects the **production ShopTransportClient** to a real isolated broker and exchanges a message/receipt without Pi, Herdr or model calls. This catches missing client hello writes that raw socket tests cannot catch. Socket delivery/injection is not business acceptance. These are offline checks, not real-host acceptance of session replacement, orphan cleanup or Grok RPC process ancestry; those need separately authorized host runs.
+
 ## Evidence and cleanup
 
 Every run prints `Artifacts: <private directory>`. `report.json` contains per-stage outcomes, versions, coverage boundary, provider-call count and cleanup result. Additional evidence includes `commands.jsonl`, `server.log`, member observations, private native plugin logs, reset archives and shutdown plans. Artifacts contain machine paths and terminal text; inspect before sharing.

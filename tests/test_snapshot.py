@@ -111,6 +111,12 @@ class SnapshotTestBase(unittest.TestCase):
 
 
 class SchemaTests(SnapshotTestBase):
+    def test_ready_phase_does_not_hide_recovery_flag(self):
+        self.state.update(phase='ready', recovery_required=True)
+        document = self.build()
+        self.assertTrue(document['shop']['recovery_required'])
+        self.assertIn('registration_needs_recovery', [x['code'] for x in document['attention']])
+
     def test_schema_sections_and_determinism(self):
         doc = self.build()
         self.assertEqual(doc['schema'], 'shop.snapshot/v1')

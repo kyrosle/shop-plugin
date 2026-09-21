@@ -19,6 +19,18 @@ Creation still only arranges seats; it does not automatically select a run. Open
 
 Legacy open workstations lacking shop_id must be reset/reopened first. Existing unmanaged Markdown runs are not silently converted or considered completed. Main repository must always be passed using `shop-run --repo /absolute/main/repo` from auxiliary worktrees.
 
+### Temporary Shop lifecycle
+
+A tab is a lookup slot, not permanent authorization. Each new open creates a unique `shop_id` and pins the local Herdr process incarnation, socket/tab, Architect pane/terminal, canonical project root and Pi session. Member shell/Pi process incarnations are recorded too. Reloading the same session is allowed; changing the session, directory, terminal or service instance requires a fresh ownership check.
+
+`ready` in an old JSON file is insufficient. `recovery_required`, legacy ownership, missing/moved/replaced members and inconsistent bindings block delegation. `/shop` performs a fresh native/process/binding preflight before sending a model request. The status line shows ready only with a recent successful check; cached status never authorizes a send. Expired identity leases mean **unknown**, not dead.
+
+Opening an existing healthy Shop reuses it without restarting members. An explicit open may archive an unused orphan in the **same slot** only after two matching checks: no run or run history/binding, no pending operation, only the current Architect pane in the layout, no old members in global native inventories, and recorded member processes/session/group/tty scopes absent. An early Architect-only setup failure may qualify. Unknown split/start outcomes, legacy/missing evidence, live/moved processes or any change block cleanup. The exact registration bytes are privately archived before removal; archive failures retain the original. The ordinary open action never resumes a partial member launch.
+
+This metadata proof is pane-scoped, not proof that every repository writer has stopped. No timeout, session switch or heartbeat deletes anything. Cross-tab registrations are not swept by directory name. Previously used Shops require explicit recovery/shutdown rather than automatic run reconciliation. Normal user-action shutdown retains its existing verified close/receipt path. Tickets (including cancelled ones), uncertain transport journals, reports, worktrees and old sessions are always retained. Endpoint advertisements expire or are removed by their owning Pi; retained advertisements cannot bypass current registration/epoch checks.
+
+`--models-file` overrides model configuration, **not** Architect session ownership: a fresh Pi candidate is still required. Unverifiable process metadata fails closed; the current local-process implementation is macOS-only. See [testing limits](TESTING.md).
+
 ## 2. Reproducible development baseline
 
 Development ticket requires exact 40/64-character base SHA, worktree root in same Git common repository, clean worktree (excluding .shop coordination files), HEAD equal to base, nonempty checks. Validate on ticket creation AND dispatch. Script never auto-commits/checks out/copies dirty code. Human must approve how to preserve dirty work first. Safe fallback is analysis, not silently developing against old HEAD. Worktrees are never auto-deleted.

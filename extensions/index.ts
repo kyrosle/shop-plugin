@@ -6,8 +6,8 @@ import { Type } from "typebox";
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import { instructions, readMode, snapshotFacts, summarizeSnapshot } from "./state.js";
-import { readBridge } from "./bridge.js";
+import { instructions, readMode, snapshotFacts, summarizeSnapshot, type Mode } from "./state.js";
+import { readBridge, type Bridge } from "./bridge.js";
 import { ConfigPublisher } from "./configuration.js";
 import { editConfiguration } from "./settings-ui.js";
 import { startShopTransport, stopShopTransport, reconcileShopTransport, sessionIdFor } from "./transport.js";
@@ -29,23 +29,46 @@ export default function shopMode(pi: ExtensionAPI) {
     } catch (error) { ctx.ui.notify(String(error), "error"); }
   } });
   pi.on("session_tree", async (_event, ctx) => {
+    generation++; pending = undefined; liveCheck = undefined;
     await configPublisher.start(ctx);
     await stopShopTransport();
     await startShopTransport(pi, ctx);
   });
   let timer: ReturnType<typeof setInterval> | undefined;
   let everEnabled = false;
-  let pending: { prompt: string; token: string } | undefined;
-  // Cache of the last bounded snapshot facts: the 1 s tick never issues a Herdr
-  // or snapshot call, it only re-renders this cache plus the registration file.
+  let pending: { prompt: string; token: string; session: string; expires: number } | undefined;
+  let generation = 0;
+  let liveCheck: { token: string; expires: number; ready: boolean; reason?: string } | undefined;
+  const preflight = async (ctx: ExtensionContext, bridge: Bridge, mode: Mode) => {
+    const session = sessionIdFor(ctx, process.env), mine = generation;
+    const result = await pi.exec("python3", [join(bridge.core_root, "core/shop.py"), "preflight", "--session-id", session], { timeout: 15000 });
+    if (result.code !== 0 || result.killed) throw new Error((result.stderr || "Shop preflight failed").slice(0, 500));
+    if (result.stdout.length > 65536) throw new Error("Oversized Shop preflight response");
+    const proof = JSON.parse(result.stdout);
+    if (generation !== mine || sessionIdFor(ctx, process.env) !== session
+        || JSON.stringify(readBridge()) !== JSON.stringify(bridge)
+        || readMode(process.env, bridge.state_dir, ctx.cwd, session).token !== mode.token)
+      throw new Error("Shop/session changed during preflight; nothing delegated");
+    if (proof.decision !== "ready") throw new Error(proof.reason || "Shop requires recovery");
+    if (proof.shop_id !== mode.state?.shop_id || proof.run_id !== (mode.state?.run_id ?? null)
+        || proof.session_id !== session || proof.state_revision !== mode.token
+        || !Number.isFinite(proof.expires_at) || proof.expires_at <= Date.now() || proof.expires_at > Date.now() + 30000)
+      throw new Error("Stale or mismatched Shop preflight");
+    liveCheck = { token: mode.token, expires: proof.expires_at, ready: true };
+    return proof;
+  };
+  // Cached live readiness is presentation only. /shop always rechecks before sending.
   let lastSnapshot = { attention: 0, warn: 0, schema: "shop.snapshot/v1" };
   const refresh = (ctx: ExtensionContext) => {
     const bridge = readBridge();
-    const mode = bridge ? readMode(process.env, bridge.state_dir, ctx.cwd) : { kind: "off" as const, token: "off" };
+    const mode = bridge ? readMode(process.env, bridge.state_dir, ctx.cwd, sessionIdFor(ctx, process.env)) : { kind: "off" as const, token: "off" };
     if (mode.kind !== "off") everEnabled = true;
+    const verified = liveCheck?.token === mode.token && liveCheck.expires > Date.now();
     if (ctx.hasUI) ctx.ui.setStatus("shop-workstation", mode.kind === "architect"
-      ? t("SHOP ready · /shop delegate · {0}", [mode.state.run_id ?? "unbound"])
-        + (lastSnapshot.attention ? ` · ⚠${lastSnapshot.attention}` : "")
+      ? verified && liveCheck?.ready
+        ? t("SHOP ready · /shop delegate · {0}", [mode.state.run_id ?? "unbound"])
+          + (lastSnapshot.attention ? ` · ⚠${lastSnapshot.attention}` : "")
+        : verified ? t("SHOP blocked · inspect state") : t("SHOP checking · live status not verified")
       : mode.kind === "blocked" ? t("SHOP blocked · inspect state") : undefined);
     return { bridge, mode };
   };
@@ -53,7 +76,8 @@ export default function shopMode(pi: ExtensionAPI) {
     void configPublisher.start(ctx);
     if (timer) clearInterval(timer);
     everEnabled = false;
-    pending = undefined;
+    generation++; pending = undefined; liveCheck = undefined;
+    let checking = false;
     let ticks = 0;
     let reconciling = false;
     const tick = () => {
@@ -61,8 +85,16 @@ export default function shopMode(pi: ExtensionAPI) {
         reconciling = true;
         void reconcileShopTransport(pi, ctx).catch(() => {}).finally(() => { reconciling = false; });
       }
-      try { refresh(ctx); }
-      catch { if (ctx.hasUI) ctx.ui.setStatus("shop-workstation", t("SHOP bridge error")); }
+      try {
+        const { bridge, mode } = refresh(ctx);
+        if (bridge && mode.kind === "architect" && !checking && ticks % 5 === 1) {
+          checking = true;
+          const mine = generation;
+          void preflight(ctx, bridge, mode).catch(error => {
+            if (generation === mine) liveCheck = { token: mode.token, expires: Date.now() + 5000, ready: false, reason: String(error) };
+          }).finally(() => { checking = false; });
+        }
+      } catch { if (ctx.hasUI) ctx.ui.setStatus("shop-workstation", t("SHOP bridge error")); }
     };
     tick();
     timer = setInterval(tick, 1000);
@@ -77,7 +109,7 @@ export default function shopMode(pi: ExtensionAPI) {
     configPublisher.stop();
     if (timer) clearInterval(timer);
     timer = undefined;
-    pending = undefined;
+    generation++; pending = undefined; liveCheck = undefined;
     void stopShopTransport().catch(() => { /* broker exits on its own idle timer */ });
     if (ctx.hasUI) {
       ctx.ui.setStatus("shop-workstation", undefined);
@@ -92,15 +124,27 @@ export default function shopMode(pi: ExtensionAPI) {
       ctx.ui.notify(t("Open Shop from the primary Pi with Ctrl+B → U first; repair invalid registration. No other Shops are created automatically."), "warning"); return;
     }
     const prompt = `[Explicit /shop request ${randomUUID()}]\n${args.trim()}`;
-    pending = { prompt, token: mode.token };
-    try { pi.sendUserMessage(prompt); } catch (error) { pending = undefined; throw error; }
+    const request = { prompt, token: mode.token, session: sessionIdFor(ctx, process.env), expires: 0 };
+    pending = request;
+    try {
+      const proof = await preflight(ctx, bridge, mode);
+      if (pending !== request || !ctx.isIdle()) throw new Error("Session/turn changed; nothing delegated");
+      request.expires = proof.expires_at;
+      pi.sendUserMessage(prompt);
+    } catch (error) {
+      if (pending === request) pending = undefined;
+      liveCheck = { token: mode.token, expires: Date.now() + 5000, ready: false, reason: String(error) };
+      ctx.ui.notify(String(error), "warning");
+      refresh(ctx);
+    }
   } });
   pi.on("before_agent_start", (event, ctx) => {
     const request = pending;
     pending = undefined; // One request only; never a sticky mode or automatic follow-up delegation.
     const { bridge, mode } = refresh(ctx);
     const explicit = request?.prompt === event.prompt;
-    if (explicit && (mode.kind !== "architect" || mode.token !== request.token))
+    if (explicit && (mode.kind !== "architect" || mode.token !== request.token
+        || request.session !== sessionIdFor(ctx, process.env) || request.expires <= Date.now()))
       return { systemPrompt: event.systemPrompt + "\n本次 /shop 的工位登记已变化。只报告未派工，不执行任务或自动恢复/新建工位。" };
     let role = "";
     if (explicit && mode.kind === "architect" && bridge) {

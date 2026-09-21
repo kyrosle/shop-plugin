@@ -34,6 +34,8 @@ interface ShopMember {
 }
 
 interface ShopState {
+  recovery_required?: boolean;
+  lifecycle?: { version?: number; session_id?: string; architect_process?: { pid: number } };
   shop_id?: string;
   run_id?: string;
   tab?: string;
@@ -297,7 +299,7 @@ export async function startShopTransport(pi: ExtensionAPI, ctx: ExtensionContext
   if (!statePath) return { started: false, reason: "missing-herdr-context" };
   const state = readShopState(statePath);
   if (!state) return { started: false, reason: "no-workstation-state" };
-  if (state.phase !== "ready") return { started: false, reason: `phase-${state.phase ?? "invalid"}` };
+  if (state.phase !== "ready" || state.recovery_required) return { started: false, reason: "shop-needs-recovery" };
   if (!state.shop_id || !state.run_id) return { started: false, reason: "run-not-bound" };
   const match = findMember(state, env.HERDR_PANE_ID);
   if (!match) return { started: false, reason: "not-a-registered-member" };
@@ -305,6 +307,13 @@ export async function startShopTransport(pi: ExtensionAPI, ctx: ExtensionContext
   if (!member.launch_id || !member.terminal_id) return { started: false, reason: "member-identity-incomplete" };
   if (!state.cwd || !sessionIdFor(ctx, env)) return { started: false, reason: "session-or-repo-unavailable" };
 
+  const ownsArchitectSession = (current: ShopState | undefined) => match.role !== "architect"
+    || (current?.lifecycle?.version === 1 && current.lifecycle.session_id === sessionIdFor(ctx, env)
+      && current.lifecycle.architect_process?.pid === process.pid);
+  if (!ownsArchitectSession(state)) {
+    if (active) await stopShopTransport();
+    return { started: false, reason: "architect-session-expired" };
+  }
   const identity: ClientIdentity = {
     shop_id: state.shop_id,
     run_id: state.run_id,
@@ -350,7 +359,14 @@ export async function startShopTransport(pi: ExtensionAPI, ctx: ExtensionContext
       scratchDir: options.scratchDir,
       exec: (args) => callTransportCli(pi, bridge, state.cwd!, runId, args),
       idle: () => ctx.isIdle(),
-      current: () => mine === generation && client.connected && sessionIdFor(ctx, env) === identity.session_id,
+      current: () => {
+        const current = readShopState(statePath);
+        const registered = current && findMember(current, identity.pane_id)?.member;
+        return registered?.name === identity.member_id && registered.launch_id === identity.launch_id
+          && registered.terminal_id === identity.terminal_id && mine === generation && client.connected && sessionIdFor(ctx, env) === identity.session_id
+          && current?.phase === "ready" && !current.recovery_required && current.shop_id === identity.shop_id
+          && current.run_id === identity.run_id && ownsArchitectSession(current);
+      },
       sendMessage: (text, details, sendOptions) => pi.sendMessage({
         customType: "shop_transport", content: text, display: true, details,
       }, sendOptions),
@@ -422,7 +438,7 @@ export async function reconcileShopTransport(pi: ExtensionAPI, ctx: ExtensionCon
   const bridge = readBridge();
   const path = bridge && statePathFor(bridge, process.env);
   const state = path ? readShopState(path) : undefined;
-  if (!state || state.phase !== "ready" || !state.run_id ||
+  if (!state || state.phase !== "ready" || state.recovery_required || !state.run_id ||
       !findMember(state, process.env.HERDR_PANE_ID)) {
     if (active) await stopShopTransport();
     return;
@@ -439,7 +455,8 @@ export async function sendShopEnvelope(pi: ExtensionAPI, ctx: ExtensionContext,
   const state = path ? readShopState(path) : undefined;
   const sender = envelope.sender as { member_id: string; launch_id: string };
   const recipient = envelope.recipient as { member_id: string; launch_id: string };
-  if (!bridge || !path || !state?.cwd || !active?.connected || !active.send || !activeIdentity ||
+  if (!bridge || !path || !state?.cwd || state.phase !== "ready" || state.recovery_required
+      || !active?.connected || !active.send || !activeIdentity ||
       state.run_id !== envelope.run_id || state.shop_id !== envelope.shop_id ||
       activeIdentity.run_id !== envelope.run_id || activeIdentity.member_id !== sender?.member_id ||
       activeIdentity.launch_id !== sender?.launch_id || activeIdentity.session_id !== sessionIdFor(ctx, process.env)) {

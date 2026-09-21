@@ -166,6 +166,7 @@
   "Shop display language; does not change tasks or models": "Shop 界面语言；不修改任务或模型",
   "Save a personal language preference": "保存个人语言偏好",
   "SHOP ready · /shop delegate · {0}": "SHOP ready · /shop 委托 · {0}",
+  "SHOP checking · live status not verified": "SHOP 核验中 · 尚未确认实时状态",
   "SHOP blocked · inspect state": "SHOP blocked · 请检查登记状态",
   "SHOP bridge error": "SHOP bridge 异常",
   "Transport error: {0}": "传输异常：{0}",

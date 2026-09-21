@@ -123,6 +123,7 @@ Herdr 开工读取原 Architect 对应记录，核对实例、进程存在和 20
 
 文件是旧式模型组格式（见 `config/models.example.json`），不是外层带 version/models 的 settings.json。
 不与默认配置合并。现有工位和非 setup 命令拒绝 --models-file。
+仍需新鲜的 Architect Pi 身份 candidate；显式文件绕过模型层，不绕过会话/进程归属。
 
 ## 并发与验收边界
 

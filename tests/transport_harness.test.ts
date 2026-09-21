@@ -10,6 +10,8 @@ import { Socket, createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createMessageReader, writeMessage } from "../transport/shared/framing.ts";
+import { ShopTransportClient, type ClientIdentity } from "../transport/client/client.ts";
+import { once } from "node:events";
 import { getBrokerLaunchSpec, spawnBrokerIfNeeded } from "../transport/client/spawn.ts";
 import {
   SHOP_TRANSPORT_PROTOCOL_NAME,
@@ -203,6 +205,29 @@ function fromOf(helloOk: RawMessage, hello: RawMessage) {
     endpoint_epoch: helloOk.endpoint_epoch as string,
   };
 }
+
+test("production clients send hello and exchange message/receipt through real broker without models", async () => {
+  const harness = await startBroker();
+  const options = { autoSpawn: false, transportDir: harness.transportDir, env: brokerEnv(harness.transportDir), requestTimeoutMs: 1000 };
+  const alice = new ShopTransportClient(options), bob = new ShopTransportClient(options);
+  const a = helloFor("alice", "alice-launch") as unknown as ClientIdentity;
+  const b = helloFor("bob", "bob-launch") as unknown as ClientIdentity;
+  try {
+    await alice.connect(a); await bob.connect(b);
+    expect(alice.connected && bob.connected).toBe(true);
+    expect(alice.broker_epoch).toBe(bob.broker_epoch);
+    const received = once(bob, "message", { signal: AbortSignal.timeout(2000) });
+    const receipt = once(alice, "receipt", { signal: AbortSignal.timeout(2000) });
+    const result = await alice.send({ message_id: "real-client-1",
+      to: { member_id: b.member_id, launch_id: b.launch_id, endpoint_epoch: bob.endpoint_epoch! },
+      kind: "note", reply_to: null, payload: { text: "zero-token probe" } }, 2000);
+    expect(result.outcome).toBe("delivered");
+    const [message] = await received;
+    expect(message.payload.text).toBe("zero-token probe");
+    bob.sendReceipt({ message_id: message.message_id, from_endpoint_epoch: bob.endpoint_epoch!, status: "injected" });
+    expect((await receipt)[0].status).toBe("injected");
+  } finally { await alice.disconnect(); await bob.disconnect(); }
+});
 
 test("exact endpoint triple delivers, receipt routes back, no files outside the transport root", async () => {
   const harness = await startBroker();

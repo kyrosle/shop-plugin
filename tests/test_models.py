@@ -221,6 +221,8 @@ class ModelSetupTests(unittest.TestCase):
         with patch.dict(os.environ, env, clear=True), patch.object(shop, 'state_root', return_value=self.root), \
                 patch.object(shop.HERDR, 'probe', return_value=SimpleNamespace(as_dict=lambda: {})), \
                 patch.object(shop, 'api', self.api), patch.object(shop, 'start') as start, \
+                patch.object(shop.lifecycle, 'begin', return_value={'version': 1}), \
+                patch.object(shop.lifecycle, 'require_current'), \
                 patch('sys.argv', ['herdr-shop', *args]), contextlib.redirect_stdout(output):
             shop.main()
         return output.getvalue(), start

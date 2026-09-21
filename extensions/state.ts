@@ -1,24 +1,29 @@
 import { t, resolveLanguage, type Language } from "./i18n.js";
 import { createHash } from "node:crypto";
-import { readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { join, resolve } from "node:path";
 
 export type Mode = { kind: "off" | "architect" | "blocked"; token: string; state?: any; error?: string };
-export function readMode(env: NodeJS.ProcessEnv, root: string, cwd: string): Mode {
+export function readMode(env: NodeJS.ProcessEnv, root: string, cwd: string, sessionId = env.PI_SESSION_ID): Mode {
   if (env.HERDR_ENV !== "1" || !env.HERDR_PANE_ID || !env.HERDR_TAB_ID || !env.HERDR_SOCKET_PATH)
     return { kind: "off", token: "off" };
   const key = createHash("sha256").update(`${env.HERDR_SOCKET_PATH}:${env.HERDR_TAB_ID}`).digest("hex").slice(0, 12);
   const file = join(root, "runtime", `${key}.json`);
   try {
     if (statSync(file).size > 65536) throw new Error("Oversized shop state");
-    const state = JSON.parse(readFileSync(file, "utf8"));
+    const raw = readFileSync(file, "utf8");
+    const state = JSON.parse(raw);
     if (!state.architect || typeof state.architect.pane !== "string") throw new Error("Invalid Architect registration");
     if (state.architect.pane !== env.HERDR_PANE_ID) return { kind: "off", token: "off" };
-    const token = JSON.stringify([state.shop_id, state.phase, state.run_id, state.lead?.pane, state.lead?.name]);
-    if (state.tab !== env.HERDR_TAB_ID || state.cwd !== cwd)
+    const token = createHash("sha256").update(raw).digest("hex");
+    const canonical = (path: string) => existsSync(path) ? realpathSync(path) : resolve(path);
+    if (state.tab !== env.HERDR_TAB_ID || typeof state.cwd !== "string" || canonical(state.cwd) !== canonical(cwd))
       return { kind: "blocked", token, state, error: "Workstation tab/cwd mismatch" };
-    if (state.phase !== "ready" || !state.shop_id || !state.lead?.name)
-      return { kind: "blocked", token, state, error: `Shop phase: ${state.phase ?? "invalid"}` };
+    if (state.phase !== "ready" || state.recovery_required || !state.shop_id || !state.lead?.name)
+      return { kind: "blocked", token, state, error: `Shop needs recovery (${state.phase ?? "invalid"})` };
+    if (state.lifecycle?.version !== 1 || !sessionId || state.lifecycle.session_id !== sessionId
+        || state.lifecycle.socket !== env.HERDR_SOCKET_PATH || canonical(state.lifecycle.root) !== canonical(cwd))
+      return { kind: "blocked", token, state, error: "Shop session ownership expired or unverified; inspect before opening" };
     return { kind: "architect", token, state };
   } catch (error: any) {
     if (error.code === "ENOENT") return { kind: "off", token: "off" };
@@ -35,7 +40,7 @@ export function instructions(mode: Mode, role: string, previouslyEnabled: boolea
     ? "Herdr 工位已关闭。当前恢复普通单 agent 模式；旧对话中的 Architect 工位限制不再因该工位而生效。仍遵守用户当前要求，不恢复或继续旧工单。"
     : undefined;
   if (mode.kind === "blocked") return `Herdr 工位状态异常：${mode.error}。不要默默退回单 agent 实现。只诊断/报告工位问题，不改业务代码、不派新任务，等待修复。`;
-  return `${role}\n\n本次由用户 /shop 显式委托，采用 Architect 模式；仅限本次请求。\n主仓库：${mode.state.cwd}\n主 Lead：${mode.state.lead.name}\n绑定 run：${mode.state.run_id ?? "未绑定；目标明确的新任务由你创建run并绑定，不要求用户念派工指令"}\n仅本次/shop任务写最小SPEC/PLAN后交主Lead。U只准备窗口，不改变普通消息的直接执行模式。不得自动接管其他Pi或开跨项目工位。无绑定且新任务明确时创建并绑定run；已有绑定沿用，存在归属冲突才询问。你不直接改业务代码，不越过主Lead派Worker。默认通知主Lead时wait=true、timeout=600000毫秒；派后继续等待，直到读到SUMMARY/REVIEW并汇总，不能只回复已派活就结束回合。超时后get检查，working继续agent wait而不重复prompt；blocked/故障则明确报告。只有用户说后台跑/不用等才直接返回，不承诺自动唤醒。Lead忙碌/故障时检查状态，不重复派送也不默默自己接手。先核对herdr-shop status，按角色提示中的 WORKFLOW 文件交接。`;
+  return `${role}\n\n本次由用户 /shop 显式委托，采用 Architect 模式；仅限本次请求。以下是刚核验的权威状态，旧对话中的工位/绑定描述不再作为事实；操作前仍须复检。\n主仓库：${mode.state.cwd}\n主 Lead：${mode.state.lead.name}\n绑定 run：${mode.state.run_id ?? "未绑定；目标明确的新任务由你创建run并绑定，不要求用户念派工指令"}\n仅本次/shop任务写最小SPEC/PLAN后交主Lead。U只准备窗口，不改变普通消息的直接执行模式。不得自动接管其他Pi或开跨项目工位。无绑定且新任务明确时创建并绑定run；已有绑定沿用，存在归属冲突才询问。你不直接改业务代码，不越过主Lead派Worker。默认通知主Lead时wait=true、timeout=600000毫秒；派后继续等待，直到读到SUMMARY/REVIEW并汇总，不能只回复已派活就结束回合。超时后get检查，working继续agent wait而不重复prompt；blocked/故障则明确报告。只有用户说后台跑/不用等才直接返回，不承诺自动唤醒。Lead忙碌/故障时检查状态，不重复派送也不默默自己接手。先核对herdr-shop status，按角色提示中的 WORKFLOW 文件交接。`;
 }
 
 export interface SnapshotFacts {

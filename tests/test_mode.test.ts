@@ -8,11 +8,11 @@ import extension from "../extensions/index.ts";
 
 function fixture(fn: (root: string, env: NodeJS.ProcessEnv, file: string, state: any) => void) {
   const root = mkdtempSync(join(tmpdir(), "shop-mode-"));
-  const env = { HERDR_ENV: "1", HERDR_TAB_ID: "t1", HERDR_PANE_ID: "p1", HERDR_SOCKET_PATH: "/mock/socket" };
+  const env = { HERDR_ENV: "1", HERDR_TAB_ID: "t1", HERDR_PANE_ID: "p1", HERDR_SOCKET_PATH: "/mock/socket", PI_SESSION_ID: "session-1" };
   const key = createHash("sha256").update("/mock/socket:t1").digest("hex").slice(0,12);
   mkdirSync(join(root,"runtime"));
   const file = join(root,"runtime",key+".json");
-  const state = { tab:"t1", cwd:"/repo", shop_id:"s1", phase:"ready", architect:{pane:"p1"}, lead:{name:"s-lead",pane:"p2"} };
+  const state = { tab:"t1", cwd:"/repo", shop_id:"s1", phase:"ready", lifecycle:{version:1, socket:"/mock/socket",root:"/repo",session_id:"session-1"}, architect:{pane:"p1"}, lead:{name:"s-lead",pane:"p2"} };
   try { fn(root,env,file,state); } finally { rmSync(root,{recursive:true,force:true}); }
 }
 
@@ -39,6 +39,13 @@ test("partial or corrupted registration does not fall back to implementation", (
   expect(readMode(e,r,"/repo").kind).toBe("blocked");
   writeFileSync(f,"{");
   expect(readMode(e,r,"/repo").kind).toBe("blocked");
+}));
+test("recovery flag, old session and legacy identity never look ready", () => fixture((r,e,f,s) => {
+  for (const invalid of [{...s,recovery_required:true}, {...s,lifecycle:undefined},
+      {...s,lifecycle:{...s.lifecycle,session_id:"old-session"}}]) {
+    writeFileSync(f,JSON.stringify(invalid));
+    expect(readMode(e,r,"/repo").kind).toBe("blocked");
+  }
 }));
 test("other tab/cwd and changing run fenced", () => fixture((r,e,f,s) => {
   writeFileSync(f,JSON.stringify(s));

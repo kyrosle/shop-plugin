@@ -361,6 +361,7 @@ def build(state, tickets, api=None, runtime=None, caller_pane=None, repo=None, r
         'herdr_runtime': runtime or {'binary': None, 'compatible': None, 'probe': 'not-read'},
         'shop': {
             'shop_id': state.get('shop_id'), 'run_id': rid, 'phase': state.get('phase'),
+            'recovery_required': bool(state.get('recovery_required')),
             'tab': state.get('tab'), 'cwd': state.get('cwd'), 'prefix': state.get('prefix'),
             'bound': bool(rid), 'binding': binding,
         },
@@ -492,6 +493,10 @@ def _links(rows, caller_pane):
 
 def _attention(doc, now):
     entries = []
+    if doc['shop'].get('recovery_required'):
+        entries.append({'code': 'registration_needs_recovery', 'severity': 'warn', 'target': 'shop',
+                        'detail': 'Stored phase is not live readiness; delegation blocked',
+                        'owner': 'architect', 'next': 'inspect native recovery; never delegate from chat history'})
     if doc.get('truncated'):
         entries.append({'code': 'snapshot_truncated', 'severity': 'warn', 'target': 'snapshot',
                         'detail': 'member/ticket caps of %d/%d applied; use the ticket files for the rest'

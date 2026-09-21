@@ -14,12 +14,12 @@ import coordination as co
 import supervision as su
 import events as events_module
 import snapshot as snapshot_module
-import repair
 import shutdown as shutdown_module
 import herdr
 import identity
 import messaging
 import locking
+import lifecycle
 import language as language_module
 
 # One typed adapter owns every Herdr subprocess/API call in this package.
@@ -83,8 +83,9 @@ def main():
         language_module.cli(sys.argv[2:])
         return
     parser = ArgumentParser(description=t(__doc__))
-    parser.add_argument('action', nargs='?', choices=['setup', 'status', 'add-worker', 'add-lead', 'remove-lead', 'remove-worker', 'reset', 'bind', 'unbind', 'dispatch', 'resume', 'recover-lead', 'patrol', 'pause', 'route-check', 'message', 'shutdown', 'recovery', 'language'], default='setup')
+    parser.add_argument('action', nargs='?', choices=['setup', 'status', 'add-worker', 'add-lead', 'remove-lead', 'remove-worker', 'reset', 'bind', 'unbind', 'dispatch', 'resume', 'recover-lead', 'patrol', 'pause', 'route-check', 'message', 'shutdown', 'recovery', 'preflight', 'language'], default='setup')
     parser.add_argument('target', nargs='?', help=t('Run ID for bind, ticket ID for dispatch, or exact auxiliary name for removal'))
+    parser.add_argument('--session-id', help='Current Architect Pi session (preflight only)')
     parser.add_argument('--handoff-complete', action='store_true',
                         help=t('Attest results are saved, dependents released, and unsent input disposable'))
     parser.add_argument('--cwd', help=t('Existing independent git worktree for additional agent'))
@@ -127,6 +128,8 @@ def main():
     removing = args.action in ('remove-lead', 'remove-worker')
     if removing and not args.target:
         parser.error('Removal requires an exact agent name (see status).')
+    if (args.session_id is not None) != (args.action == 'preflight'):
+        parser.error('--session-id is required only for preflight')
     if args.target and not (removing or args.action in ('bind', 'dispatch', 'pause', 'message')):
         parser.error('Unexpected target')
     if args.handoff_complete and not (removing or args.action == 'unbind'):
@@ -159,15 +162,31 @@ def main():
     socket = os.environ.get('HERDR_SOCKET_PATH', '')
     key = hashlib.sha256((socket + ':' + tab).encode()).hexdigest()[:12]
     state_dir = root / 'runtime'
-    state_dir.mkdir(parents=True, exist_ok=True)
     path = state_dir / (key + '.json')
+    if args.action == 'preflight':
+        # Read-only polls must not lock out contracts/checkpoints or /shop.
+        # File/binding fingerprints fence concurrent writes in the probe itself.
+        raw = lifecycle.reset.read_file(path)
+        state = json.loads(raw) if raw is not None else None
+        if not state or state.get('architect', {}).get('pane') != pane['pane_id']:
+            result = {'decision': 'blocked', 'reason': 'No Shop owned by this Architect pane'}
+        else:
+            result = lifecycle.preflight(api, path, state, args.session_id)
+        print(json.dumps(result, ensure_ascii=False))
+        return
+    state_dir.mkdir(parents=True, exist_ok=True)
     if args.action == 'patrol':
         print(json.dumps(su.patrol(api, path, pane, args.seconds), ensure_ascii=False, indent=2))
         return
     with (state_dir / (key + '.lock')).open('w') as lock:
         locking.acquire(lock, wait_seconds=30 if args.action == 'reset' else 0,
                         on_wait=lambda: notify(t('Shop shutdown waiting'), t('Startup/member operation still running; wait at most 30 seconds, then recheck identity and task state.')))
-        state = json.loads(path.read_text()) if path.exists() else None
+        raw = lifecycle.reset.read_file(path)
+        state = json.loads(raw) if raw is not None else None
+        if state and args.action == 'recover-lead':
+            lifecycle.require_owner(api, state, root)
+        if state and (removing or args.action in ('bind', 'unbind', 'dispatch', 'message', 'add-lead', 'add-worker')):
+            lifecycle.require_current(api, state, root)
         if args.action == 'status':
             # One bounded, redacted producer for every status reader. No raw state dump.
             if not state:
@@ -275,16 +294,20 @@ def main():
             if state:
                 if args.models_file:
                     raise RuntimeError('--models-file cannot change an existing shop; its launch profiles are pinned')
-                model_profiles(state)
                 with co.repo_lock(state['cwd']):
-                    if repair.is_pending_add(state):
-                        result = repair.resume_pending_add(
-                            api, start, save, path, state, pane, args.dry_run)
+                    if args.dry_run:
+                        try:
+                            lifecycle.require_current(api, state, root)
+                            result = {'reused': state['shop_id'], 'creates_panes': 0}
+                        except Exception:
+                            result = {'would_archive': lifecycle.orphan_proof(api, path, state, pane), 'creates_panes': 0}
                     else:
-                        result = repair.restore(
-                            api, start, save, path, state, pane, args.dry_run)
-                print(json.dumps(result, ensure_ascii=False, indent=2))
-                return
+                        result = lifecycle.open_existing(api, path, state, pane)
+                if args.dry_run or 'reused' in result:
+                    print(json.dumps(result, ensure_ascii=False, indent=2))
+                    return
+                print('Archived stale registration: ' + result['archive'], file=sys.stderr)
+                state = None
             layout = api('pane', 'layout', '--pane', pane['pane_id'])['layout']
             if len(layout['panes']) != 1 or layout.get('zoomed'):
                 raise RuntimeError('Setup requires one unzoomed Pi pane in current tab; existing layout untouched.')
@@ -295,6 +318,8 @@ def main():
             cwd = pane.get('foreground_cwd') or pane.get('cwd')
             if not cwd or not Path(cwd).is_dir():
                 raise RuntimeError('Cannot resolve project directory.')
+            cwd = str(Path(cwd).resolve())
+            scope = lifecycle.begin(api, root, pane, cwd)
             prefix = 's' + key[:8]
             if args.models_file:
                 profiles = settings.resolve_models(settings.models(args.models_file))
@@ -305,10 +330,13 @@ def main():
                 print(json.dumps({'cwd': cwd, 'tab': tab, 'architect': pane['pane_id'],
                                   'name_prefix': prefix, 'model_profiles': profiles, 'config_source': config_source, 'creates': 2}, indent=2))
                 return
+            if lifecycle.begin(api, root, pane, cwd) != scope:
+                raise RuntimeError('Architect identity changed before setup; nothing started')
             state = {'schema_version': 1, 'tab': tab, 'cwd': cwd, 'prefix': prefix, 'shop_id': key + '-' + uuid.uuid4().hex[:8], 'phase': 'creating', 'layout': 'left-architect-right-zones',
                      'architect': {'pane': pane['pane_id'], 'name': prefix + '-architect',
                                    'terminal_id': pane.get('terminal_id')},
                      'workers': [], 'model_profiles': profiles, 'config_source': config_source,
+                     'lifecycle': scope,
                      'setup_stage': 'architect'}
             identity.assign_identity(state['architect'],
                                      terminal_id=pane.get('terminal_id'),
@@ -334,6 +362,8 @@ def main():
                 start(state['lead'], 'lead', state)
                 save(path, state)
                 start(state['workers'][0], 'worker', state)
+                if lifecycle.begin(api, root, pane, cwd) != scope:
+                    raise RuntimeError('Architect identity changed during setup; inspect partial Shop')
                 state.pop('setup_stage', None)
                 state['phase'] = 'ready'
                 save(path, state)
@@ -558,6 +588,7 @@ def start(item, role, state):
         raise RuntimeError('Started agent identity not confirmed')
     identity.assign_identity(item, terminal_id=live['terminal_id'],
                              session_source='herdr_agent_terminal')
+    lifecycle.record_member(api, state, item)
 
 
 if __name__ == '__main__':

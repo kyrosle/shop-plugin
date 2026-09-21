@@ -160,6 +160,12 @@ export class ShopTransportClient extends EventEmitter {
         { retryable: true, outcomeKnown: false })), this.options.requestTimeoutMs ?? 5_000);
       timer.unref?.();
       this.pendingHello = (value) => { clearTimeout(timer); resolve(value); };
+      try { writeMessage(socket, hello); }
+      catch (error) { clearTimeout(timer); reject(error); }
+    }).catch(error => {
+      this.pendingHello = null;
+      this.disconnectSocket();
+      throw error;
     });
     const parsed = reply as Record<string, unknown>;
     if (parsed.type === "hello_rejected") {

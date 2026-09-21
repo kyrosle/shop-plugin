@@ -29,6 +29,7 @@ beforeEach(() => {
   mkdirSync(join(root, "runtime"));
   statePath = join(root, "runtime", `${key}.json`);
   state = { shop_id: "s1", run_id: "r1", phase: "ready", cwd: join(root, "main-repo"), tab: "t1",
+    lifecycle: { version: 1, session_id: "session1", architect_process: { pid: process.pid } },
     architect: { name: "architect", pane: "p1", launch_id: "a1", terminal_id: "term1" },
     lead: { name: "lead", pane: "p2", launch_id: "l1", terminal_id: "term2" }, workers: [] };
   writeFileSync(statePath, JSON.stringify(state));
@@ -47,6 +48,13 @@ afterEach(async () => {
   for (const key of Object.keys(process.env)) if (!(key in original)) delete process.env[key];
   Object.assign(process.env, original);
   rmSync(root, { recursive: true, force: true });
+});
+
+test("replacement Architect session cannot register an old Shop transport endpoint", async () => {
+  sid = "replacement-session";
+  const result = await startShopTransport(pi, ctx, {createClient: () => { throw new Error("must not connect"); }});
+  expect(result).toEqual({started:false,reason:"architect-session-expired"});
+  expect(calls).toHaveLength(0);
 });
 
 test("dashboard open/escape performs only a read, no dispatch/model/Herdr control", async () => {

@@ -123,6 +123,7 @@ For a **new** Shop only; explicitly bypasses Project/Session layers:
 
 The file uses the legacy model-group shape in `config/models.example.json`, not a settings.json wrapper with version/models.
 It is not merged with default configuration. Existing Shops and non-setup commands reject `--models-file`.
+A fresh Architect Pi identity candidate is still required: the file bypasses model layers, not session/process ownership.
 
 ## Concurrency and validation
 

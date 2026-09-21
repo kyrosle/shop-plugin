@@ -55,6 +55,12 @@ npm run test:host -- --run --scenario lifecycle
 
 绑定 run 的 broker 通信、派单 → 接手 → 交付、worktree 集成、真实模型协作质量、截图视觉对比目前**尚未覆盖**。这是宿主生命周期基础，不是完整模型协作闭环的验收证据。
 
+### 离线生命周期与实际客户端检查
+
+`tests/test_lifecycle.py` 使用真实核心、适配器与 candidate 文件逻辑，只替换原生响应及 OS 进程元数据，覆盖会话/租约/进程实例失效、成员移动/忙碌、未使用工位的孤立登记归档、私有原始字节备份、备份失败和原件变化。`test_setup_adapter.py` 也覆盖早期仅 Architect 失败后的安全归档；split/start 结果不明时仍保留 partial 证据。Workbench 业务测试替换了已核验归属门禁，不独立证明真实生命周期归属。
+
+Bun 命令测试确认预检失败或会话变化时不发送模型请求。`transport_harness.test.ts` 将**实际 ShopTransportClient** 接入隔离的真实 broker，完成消息/回执交换，不运行 Pi、Herdr 或模型，可捕获原始 socket 测试发现不了的客户端漏发 hello。socket 派送/注入不等于业务接受。这些是离线检查，不是换会话、孤立登记清理或 Grok RPC 进程祖先链的真实宿主验收；后者须单独授权运行。
+
 ## 证据与清理
 
 每次打印 `Artifacts: <私有目录>`。`report.json` 包含各阶段结果、版本、覆盖边界、Provider 调用次数及清理结果。另保留 `commands.jsonl`、`server.log`、成员观测、私有原生插件日志、重置归档和收工计划。证据含本机路径和终端文字，分享前先检查。

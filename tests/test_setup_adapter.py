@@ -8,6 +8,8 @@ import copy
 import hashlib
 import io
 import json
+import os
+import processes
 from pathlib import Path
 import tempfile
 from types import SimpleNamespace
@@ -35,6 +37,18 @@ class SetupRunner:
                 'terminal_id': 'term-' + pane_id, 'cwd': str(cwd),
                 'agent': agent, 'agent_status': 'idle'}
 
+    def process_table(self):
+        def row(pid, ppid, sid, tty, comm):
+            return {'pid': pid, 'ppid': ppid, 'pgid': pid, 'sid': sid, 'tty': tty,
+                    'uid': os.geteuid(), 'comm': comm, 'start': 'fixture-start'}
+        table = {100: row(100, 1, 100, '??', 'herdr')}
+        for pane in self.panes:
+            shell = (int(pane[1:]) + 1) * 100
+            table[shell] = row(shell, 100, shell, 'tty-' + pane, 'bash')
+            if pane in self.agents:
+                table[shell + 1] = row(shell + 1, shell, shell, 'tty-' + pane, 'pi')
+        return table
+
     def __call__(self, argv, **kwargs):
         args = tuple(argv[1:])
         route = args[:2]
@@ -44,6 +58,16 @@ class SetupRunner:
             result = {'type': 'pane_current', 'pane': self.panes['p1']}
         elif route == ('pane', 'get'):
             result = {'type': 'pane_info', 'pane': self.panes[args[2]]}
+        elif route == ('workspace', 'list'):
+            result = {'type': 'workspace_list', 'workspaces': [{'workspace_id': 'w1'}]}
+        elif route == ('pane', 'list'):
+            result = {'type': 'pane_list', 'panes': list(self.panes.values())}
+        elif route == ('pane', 'process-info'):
+            pane = args[args.index('--pane') + 1]
+            shell = (int(pane[1:]) + 1) * 100
+            result = {'type': 'pane_process_info', 'process_info': {'pane_id': pane,
+                'shell_pid': shell, 'foreground_process_group_id': shell + 1,
+                'foreground_processes': [{'pid': shell + 1, 'name': 'node', 'argv0': 'pi'}]}}
         elif route == ('agent', 'list'):
             result = {'type': 'agent_list', 'agents': list(self.agents.values())}
         elif route == ('pane', 'layout'):
@@ -97,16 +121,33 @@ class SetupAdapterTests(unittest.TestCase):
                                       resolve_models=settings.resolve_models,
                                       role_text=lambda role: 'Fixture role: ' + role)
 
-    def run_setup(self, runner):
+    def run_setup(self, runner, *args):
+        output = io.StringIO()
         adapter = herdr.Herdr(binary='/fake/herdr', runner=runner)
         with patch.object(shop, 'HERDR', adapter), \
                 patch.object(shop, '_SETTINGS', self.config), \
                 patch('configuration.startup_profiles', return_value=(copy.deepcopy(self.profiles), {'kind': 'fixture'})), \
-                patch('sys.argv', ['shop', 'setup']), \
+                patch('configuration.startup_candidate', return_value={'pid': 201, 'session_id': 'fixture-session'}), \
+                patch.object(processes, 'snapshot', side_effect=runner.process_table), \
+                patch.object(processes, 'local_server_pid', return_value=100), \
+                patch('sys.argv', ['shop', *(args or ('setup',))]), \
                 patch.dict('os.environ', {'HERDR_ENV': '1', 'HERDR_PANE_ID': 'p1',
                                            'HERDR_ACTIVE_PANE_ID': '', 'HERDR_SOCKET_PATH': 'fixture-socket'}), \
-                contextlib.redirect_stdout(io.StringIO()):
+                contextlib.redirect_stdout(output):
             shop.main()
+        return output.getvalue()
+
+    def test_preflight_is_read_only_and_never_takes_mutation_locks(self):
+        runner = SetupRunner(self.cwd)
+        self.run_setup(runner)
+        before = self.path.read_bytes()
+        mutations = list(runner.mutations)
+        with patch.object(shop.locking, 'acquire', side_effect=AssertionError('read poll acquired write lock')):
+            proof = json.loads(self.run_setup(runner, 'preflight', '--session-id', 'fixture-session'))
+        self.assertEqual(proof['decision'], 'ready', proof)
+        self.assertEqual(self.path.read_bytes(), before)
+        self.assertEqual(runner.mutations, mutations)
+        self.assertFalse((self.cwd / '.shop').exists())
 
     def test_setup_uses_typed_mutation_replies_through_ready(self):
         runner = SetupRunner(self.cwd)
@@ -164,7 +205,14 @@ class SetupAdapterTests(unittest.TestCase):
                 self.assertEqual(runner.mutations[-1], failure[0])
                 self.assertEqual(runner.mutations.count(failure[0]), failure[1])
                 mutations = list(runner.mutations)
-                with self.assertRaisesRegex(RuntimeError, 'Incomplete setup registration|Existing/partial layout'):
+                if state['setup_stage'] == 'architect':
                     self.run_setup(runner)
-                self.assertEqual(runner.mutations, mutations)
-                self.assertEqual(self.path.read_bytes(), before)
+                    self.assertEqual(json.loads(self.path.read_bytes())['phase'], 'ready')
+                    archives = list((self.state_root / 'reset-archive').glob('*.json'))
+                    self.assertEqual(len(archives), 1)
+                    self.assertEqual(archives[0].read_bytes(), before)
+                else:
+                    with self.assertRaisesRegex(RuntimeError, 'Incomplete setup|Existing/partial layout'):
+                        self.run_setup(runner)
+                    self.assertEqual(runner.mutations, mutations)
+                    self.assertEqual(self.path.read_bytes(), before)

@@ -200,12 +200,12 @@ def candidate_path(state_dir, socket, tab, pane):
     return Path(state_dir) / 'config-candidates' / (key + '.json')
 
 
-def startup_profiles(api, pane, cwd, socket, state_dir=None, config_dir=None):
-    """Consume one recent Pi claim; never read transcripts or guess another pane."""
+def startup_candidate(api, pane, cwd, socket, state_dir=None):
+    """Read a fresh identity claim; expiry means unknown, never permission to delete."""
     path = candidate_path(state_dir or settings.STATE, socket, pane['tab_id'], pane['pane_id'])
     record, revision = read_document(path)
     if revision == 'missing':
-        raise RuntimeError('Missing Pi settings candidate; /reload or /shop-config in Architect, or explicitly use --models-file')
+        raise RuntimeError('Missing Pi settings candidate; /reload or /shop-config in Architect (--models-file does not bypass session ownership)')
     expected = {'schema': 1, 'socket': socket, 'tab': pane['tab_id'], 'pane': pane['pane_id'],
                 'root': str(Path(cwd).resolve())}
     if type(record.get('schema')) is not int or any(record.get(key) != value for key, value in expected.items()):
@@ -228,6 +228,13 @@ def startup_profiles(api, pane, cwd, socket, state_dir=None, config_dir=None):
     if (live.get('agent') != 'pi' or live.get('terminal_id') != record['terminal']
             or live.get('tab_id') != pane['tab_id']):
         raise RuntimeError('Settings candidate live instance mismatch')
+    return record
+
+
+def startup_profiles(api, pane, cwd, socket, state_dir=None, config_dir=None):
+    """Consume one recent Pi claim; never read transcripts or guess another pane."""
+    record = startup_candidate(api, pane, cwd, socket, state_dir)
+    path = candidate_path(state_dir or settings.STATE, socket, pane['tab_id'], pane['pane_id'])
     view = load(cwd, record.get('trusted'), record.get('overrides', {}), config_dir,
                 record.get('project_dir', '.pi'))
     profiles = settings.resolve_models({'seats': view['layers']['session']['profiles']})

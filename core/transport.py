@@ -117,6 +117,8 @@ def verify_envelope(state, envelope, self_name, self_pane=None):
     Returns the typed envelope. Raises TransportReject with a frozen code, so a
     malformed or foreign frame can never reach the model.
     """
+    if state.get('recovery_required'):
+        raise TransportReject('E_IDENTITY_INCOMPLETE', 'Shop requires recovery; no model injection permitted')
     _require_keys(envelope, ENVELOPE_KEYS, 'envelope')
     if envelope['schema'] != SCHEMA:
         raise TransportReject('E_MALFORMED', 'envelope.schema must be ' + SCHEMA)
