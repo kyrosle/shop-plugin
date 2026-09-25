@@ -79,6 +79,37 @@ FIDELITY_PLAN = """# PLAN
 """
 
 
+SESSION_MARKERS = ('"parentSession"', '"type":"session"', '"type":"session_info"', '"type":"custom_message"')
+
+
+READERS = re.compile(r'\b(cat|head|tail|grep|rg|python3?|node|jq|wc|less|sed|awk|open)\b')
+
+
+def session_file_reads(session_paths):
+    """A seat read another Pi session: a read/bash call that reads a .jsonl file (exclusions such
+    as `-not -path` do not count), or a tool result that returned session JSONL. Paths merely
+    mentioned in report prose do not count."""
+    found = []
+    for path in session_paths:
+        for line in Path(path).read_text().splitlines():
+            message = (json.loads(line).get('message') or {}) if line.strip() else {}
+            if message.get('role') == 'assistant':
+                for part in message.get('content') or []:
+                    if not isinstance(part, dict) or part.get('type') != 'toolCall':
+                        continue
+                    arguments = part.get('arguments') or {}
+                    if part.get('name') == 'read' and str(arguments.get('path', '')).endswith('.jsonl'):
+                        found.append({'session': Path(path).name, 'tool': 'read', 'excerpt': str(arguments.get('path'))[:160]})
+                    command = re.sub(r'-not\s+-path\s+\S+', '', str(arguments.get('command', '')))
+                    if part.get('name') == 'bash' and '.jsonl' in command and READERS.search(command):
+                        found.append({'session': Path(path).name, 'tool': 'bash', 'excerpt': command[:160]})
+            elif message.get('role') == 'toolResult':
+                text = ''.join(part.get('text', '') for part in message.get('content') or [] if isinstance(part, dict))
+                if any(marker in text.replace(' ', '') for marker in SESSION_MARKERS):
+                    found.append({'session': Path(path).name, 'tool': message.get('toolName'), 'excerpt': text[:160]})
+    return found
+
+
 class BudgetExceeded(RuntimeError):
     pass
 
@@ -666,7 +697,14 @@ sys.stdout.buffer.write(r.stdout); sys.stderr.buffer.write(r.stderr); sys.exit(r
         """Pass only if the agreed format reached the output and the rejected one did not."""
         run = self.delegation['run']
         seats = [json.loads(path.read_text()) for path in (run / 'seats').glob('*.json')]
-        lead_session = next(Path(seat['session']).read_text() for seat in seats if seat['role'] == 'lead')
+        lead_entries = [json.loads(line) for seat in seats if seat['role'] == 'lead'
+                        for line in Path(seat['session']).read_text().splitlines() if line.strip()]
+        # Only what the handoff wrote, i.e. entries before the kickoff prompt, not what the seat read later.
+        kickoff = next((index for index, entry in enumerate(lead_entries)
+                        if (entry.get('message') or {}).get('role') == 'user'
+                        and 'Start now' in json.dumps(entry['message'].get('content'))), len(lead_entries))
+        lead_session = json.dumps(lead_entries[:kickoff])
+        session_reads = session_file_reads(seat['session'] for seat in seats)
         report_path, rejected = self.root / 'project/report.json', self.root / 'project/report.yaml'
         try:
             produced = json.loads(report_path.read_text())
@@ -687,6 +725,7 @@ sys.stdout.buffer.write(r.stdout); sys.stderr.buffer.write(r.stderr); sys.exit(r
             'lead_context_has_rejected_key': 'summary' in lead_session and 'report.yaml' in lead_session,
             'report_json': produced,
             'report_yaml_written': rejected.exists(),
+            'session_file_reads': session_reads,
         }
         verdict['faithful'] = (isinstance(produced, dict) and set(produced) == {'file', 'first_line'}
                                and mentions_fixture(str(produced.get('first_line'))) and not rejected.exists())
@@ -694,6 +733,8 @@ sys.stdout.buffer.write(r.stdout); sys.stderr.buffer.write(r.stderr); sys.exit(r
         self.report['baseline'] = {'task': 'S2 fidelity', 'seconds_to_accepted': self.delegation['accepted_seconds'],
                                    'seconds_to_report': self.delegation['accepted_seconds'], 'seats': usage,
                                    'cost_usd': round(sum(seat['cost_usd'] for seat in usage.values()), 6)}
+        if session_reads:
+            raise RuntimeError('Seat bypassed the handoff by reading session files: ' + json.dumps(session_reads)[:1000])
         if not verdict['faithful']:
             raise RuntimeError('Agreed format not delivered: ' + json.dumps(verdict)[:1500])
 

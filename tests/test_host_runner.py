@@ -380,6 +380,29 @@ class LiveProviderTests(unittest.TestCase):
         self.assertFalse(host_runner.mentions_fixture('Host smoke fixture; business repository.'))
         self.assertFalse(host_runner.mentions_fixture(None))
 
+    def test_session_read_detection_uses_tool_results_not_mentions(self):
+        host = self.live_host()
+        path = host.root / 'seat.jsonl'
+        entry = lambda role, text, **extra: json.dumps({'type': 'message', 'message': {'role': role, 'content': [{'type': 'text', 'text': text}], **extra}})
+        leaked = '{"type":"session","id":"x","parentSession":"/p.jsonl"}'
+        path.write_text('\n'.join([
+            entry('assistant', 'I will not read sessions/*.jsonl'),
+            entry('toolResult', 'find . -not -path ./sessions/*', toolName='bash'),
+            entry('toolResult', 'blocked: sessions/*.jsonl is forbidden', toolName='shop_report'),
+        ]) + '\n')
+        self.assertEqual(host_runner.session_file_reads([path]), [])
+        with path.open('a') as stream:
+            stream.write(entry('toolResult', leaked, toolName='bash') + '\n')
+        self.assertEqual([hit['tool'] for hit in host_runner.session_file_reads([path])], ['bash'])
+        call = lambda name, arguments: json.dumps({'type': 'message', 'message': {'role': 'assistant', 'content': [
+            {'type': 'toolCall', 'id': 'c', 'name': name, 'arguments': arguments}]}})
+        path.write_text('\n'.join([
+            call('bash', {'command': "find . -name '*.md' -not -path './s/sessions/*.jsonl'"}),
+            call('bash', {'command': "python3 -c \"import json,glob; [json.loads(l) for l in open(glob.glob('s/*.jsonl')[0])]\""}),
+            call('read', {'path': '/x/sessions/a.jsonl'}),
+        ]) + '\n')
+        self.assertEqual([hit['tool'] for hit in host_runner.session_file_reads([path])], ['bash', 'read'])
+
     def test_aggregate_reports_pass_rate_and_spreads(self):
         def report(result, cost, accepted=None, step='live.delegation_delivery'):
             value = {'root': '/tmp/r', 'result': result, 'scenario': 'live-delegation', 'live': {'model': 'm', 'usage': {'cost_usd': cost}},

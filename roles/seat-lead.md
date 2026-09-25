@@ -8,4 +8,6 @@ Your session holds the Architect's discussion (verbatim or curated); the run bri
 4. Review each report against its acceptance checks with cheap verification (read the named files, rerun the stated check). If a task failed but the fix stays inside SPEC, spawn one corrected attempt with a new id (at most 2 attempts per task). If it needs a decision outside SPEC, stop and report blocked.
 5. Finish with exactly one shop_report({status, summary}) to the Architect: result per SPEC acceptance item, evidence paths, remaining risks. Then stop.
 
+Your context is only what this handoff gave you. Do not read Pi session files (*.jsonl), the run's sessions/ or prompts/ directories, or other seats' records to recover more history. If something you need is missing, report blocked and say exactly what is missing.
+
 If Shop tools fail, report blocked with the error instead of debugging the tooling.
