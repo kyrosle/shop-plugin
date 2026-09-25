@@ -29,7 +29,8 @@ REPO = Path(__file__).resolve().parents[2]
 REQUIRED_COMMANDS = {'shop', 'shop-ui', 'shop-config', 'shop-language', 'shop-status', 'shop-reset'}
 FIXTURE_MODEL = 'shop-host-fixture/no-network'
 THINKING_LEVELS = ('off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max')
-LIVE_SCENARIOS = ('live-smoke', 'live-delegation', 'live-seats')
+LIVE_SCENARIOS = ('live-smoke', 'live-delegation', 'live-seats', 'live-fidelity')
+HANDOFF_MODES = ('auto', 'raw', 'curate', 'brief')
 LIVE_TOKEN = 'SHOP_LIVE_OK'
 FIXTURE_TEXT = 'Host smoke fixture; no business repository.'
 # Same work as LIVE_TASK, phrased for the ephemeral-seat flow (/shop-spec, /shop-go).
@@ -47,6 +48,35 @@ def mentions_fixture(text):
     """Models wrap Markdown lines; compare with whitespace and case normalized."""
     normalize = lambda value: ' '.join(value.split()).lower()
     return normalize(FIXTURE_TEXT) in normalize(text or '')
+
+
+# S2: a constraint and a rejected alternative that live only in the Architect
+# conversation. SPEC/PLAN deliberately omit them, so only the handoff can carry them.
+FIDELITY_DISCUSSION = (
+    'Context for an upcoming task; just discuss, do not use tools. We will produce a report about fixture.txt. '
+    'My hard requirement: the report file must be named report.json in the repository root and be a JSON object '
+    'with exactly two keys, "file" and "first_line". Acknowledge in one sentence.',
+    'Alternative I considered: a YAML file report.yaml with a single key named summary. Compare the two in two '
+    'sentences; do not use tools.',
+    'Decision: reject the YAML/summary idea entirely. Keep report.json with exactly the keys file and first_line. '
+    'Acknowledge in one sentence; do not use tools or write files.',
+)
+FIDELITY_SPEC = """# SPEC
+
+Objective: produce the report about fixture.txt that the user and the Architect agreed on in their discussion.
+
+Constraints: the report's file name, format and exact keys are as agreed in that discussion; they are
+intentionally not repeated here. Do not modify fixture.txt.
+
+Acceptance: the agreed report file exists in the repository root with the agreed format and keys, and its
+content reflects fixture.txt.
+"""
+FIDELITY_PLAN = """# PLAN
+
+1. Worker: read fixture.txt and write the agreed report file in the repository root, in the format agreed in the
+   discussion. Acceptance: the file exists with exactly the agreed keys.
+2. Lead: verify the file against the agreement, then report.
+"""
 
 
 class BudgetExceeded(RuntimeError):
@@ -130,7 +160,10 @@ class HostTest:
                                        'worktree integration', 'visual screenshot comparison',
                                        'successful repeated-close acknowledgement']}
         if live:
-            self.report['live'] = {key: live[key] for key in ('model', 'thinking', 'budget_usd', 'max_calls')}
+            self.report['live'] = {key: live[key] for key in ('model', 'thinking', 'budget_usd', 'max_calls', 'handoff_mode')
+                                   if key in live}
+            # Inherited by every pane the private server starts, including seats.
+            self.env['SHOP_HANDOFF_MODE'] = live.get('handoff_mode', 'auto')
         write_json(self.root / 'owned-test.json', {'nonce': uuid.uuid4().hex, 'runner_pid': os.getpid(),
                                                   'socket': self.env['HERDR_SOCKET_PATH']})
 
@@ -547,7 +580,7 @@ sys.stdout.buffer.write(r.stdout); sys.stderr.buffer.write(r.stderr); sys.exit(r
             seats = [json.loads(path.read_text()) for path in (self.delegation['run'] / 'seats').glob('*.json')]
             roles = {self.pane: 'architect', **{seat['pane']: seat['role'] for seat in seats}}
         usage = self.seat_usage(rows, roles)
-        analyzers = [seat['curation'].get('analyzer') or {} for seat in seats]
+        analyzers = [seat['handoff'].get('analyzer') or {} for seat in seats]
         if analyzers:
             # Curator completions bypass the session ledger; count them as their own seat.
             usage['curator'] = {'calls': sum(a.get('calls', 0) for a in analyzers),
@@ -599,11 +632,70 @@ sys.stdout.buffer.write(r.stdout); sys.stderr.buffer.write(r.stderr); sys.exit(r
         self.report['live_delivery'] = {
             'run': str(run), 'lead_report': report('lead'), 'workers': [seat['id'] for seat in workers],
             'completed_workers': done,
-            'curation': {seat['id']: seat['curation'] for seat in seats}}
+            'handoff': {seat['id']: seat['handoff'] for seat in seats}}
         if report('lead')['status'] != 'completed' or not done:
             raise RuntimeError('Lead did not complete through a Worker: ' + json.dumps(self.report['live_delivery'])[:1500])
         if not any(mentions_fixture(report(seat)['summary'] + (report(seat).get('evidence') or '')) for seat in done):
             raise RuntimeError('No Worker report quotes the fixture content')
+
+    def fidelity_discussion(self):
+        """Real Architect turns that establish the constraint and reject the alternative."""
+        self.settle_architect(120)
+        self.delegation = {'task': 'S2 fidelity', 'ledger_start': len(self.usage_records()), 'started': time.monotonic()}
+        for text in FIDELITY_DISCUSSION:
+            seen = len(self.usage_records())
+            self.api('agent', 'prompt', self.pane, text)
+            self.wait(lambda: any(row.get('pane') == self.pane and row.get('stopReason') == 'stop'
+                                  for row in self.usage_records()[seen:]), 'Architect did not answer', timeout=240)
+            self.settle_architect()
+
+    def fidelity_go(self):
+        """Fixed SPEC/PLAN that omit the format; /shop-go hands the discussion to the Lead."""
+        run = self.root / 'project/.shop/seats/fidelity'
+        run.mkdir(parents=True)
+        (run / 'SPEC.md').write_text(FIDELITY_SPEC)
+        (run / 'PLAN.md').write_text(FIDELITY_PLAN)
+        self.delegation['run'] = run
+        self.slash('/shop-go ' + str(run))
+        self.wait(lambda: 'Launch Lead?' in self.screen(), 'Lead launch confirmation not shown', timeout=60)
+        self.api('agent', 'send-keys', self.pane, 'enter')
+        self.wait(lambda: (run / 'reports/lead.json').exists(), 'Lead did not report', timeout=self.live['timeout'])
+        self.delegation['accepted_seconds'] = round(time.monotonic() - self.delegation['started'], 1)
+
+    def fidelity_check(self):
+        """Pass only if the agreed format reached the output and the rejected one did not."""
+        run = self.delegation['run']
+        seats = [json.loads(path.read_text()) for path in (run / 'seats').glob('*.json')]
+        lead_session = next(Path(seat['session']).read_text() for seat in seats if seat['role'] == 'lead')
+        report_path, rejected = self.root / 'project/report.json', self.root / 'project/report.yaml'
+        try:
+            produced = json.loads(report_path.read_text())
+        except (OSError, ValueError):
+            produced = None
+        rows = self.usage_records()[self.delegation['ledger_start']:]
+        roles = {self.pane: 'architect', **{seat['pane']: seat['role'] for seat in seats}}
+        usage = self.seat_usage(rows, roles)
+        analyzers = [seat['handoff'].get('analyzer') or {} for seat in seats]
+        usage['curator'] = {'calls': sum(a.get('calls', 0) for a in analyzers), 'input': sum(a.get('input', 0) for a in analyzers),
+                            'output': sum(a.get('output', 0) for a in analyzers), 'cache_read': sum(a.get('cacheRead', 0) for a in analyzers),
+                            'cost_usd': round(sum(a.get('cost', 0) for a in analyzers), 6)}
+        verdict = {
+            'handoff': {seat['id']: {key: seat['handoff'].get(key) for key in ('mode', 'reason', 'sourceTokens', 'checkpointTokens')}
+                        for seat in seats},
+            'lead_status': json.loads((run / 'reports/lead.json').read_text())['status'],
+            'lead_context_has_constraint': 'first_line' in lead_session,
+            'lead_context_has_rejected_key': 'summary' in lead_session and 'report.yaml' in lead_session,
+            'report_json': produced,
+            'report_yaml_written': rejected.exists(),
+        }
+        verdict['faithful'] = (isinstance(produced, dict) and set(produced) == {'file', 'first_line'}
+                               and mentions_fixture(str(produced.get('first_line'))) and not rejected.exists())
+        self.report['fidelity'] = verdict
+        self.report['baseline'] = {'task': 'S2 fidelity', 'seconds_to_accepted': self.delegation['accepted_seconds'],
+                                   'seconds_to_report': self.delegation['accepted_seconds'], 'seats': usage,
+                                   'cost_usd': round(sum(seat['cost_usd'] for seat in usage.values()), 6)}
+        if not verdict['faithful']:
+            raise RuntimeError('Agreed format not delivered: ' + json.dumps(verdict)[:1500])
 
     def seats_closed(self):
         """S5: disposable seats close their own panes; only Architect remains."""
@@ -755,9 +847,14 @@ sys.stdout.buffer.write(r.stdout); sys.stderr.buffer.write(r.stderr); sys.exit(r
             self.step('host.start_and_load', self.start)
             if scenario in LIVE_SCENARIOS:
                 self.step('live.architect_roundtrip', lambda: self.live_roundtrip(self.pane))
-                if scenario != 'live-seats':
+                if scenario not in ('live-seats', 'live-fidelity'):
                     self.step('setup.live_members', self.setup)
                     self.step('live.member_roundtrip', self.live_members)
+                if scenario == 'live-fidelity':
+                    self.step('fidelity.discussion', self.fidelity_discussion)
+                    self.step('fidelity.go', self.fidelity_go)
+                    self.step('fidelity.check', self.fidelity_check)
+                    self.step('seats.panes_closed', self.seats_closed)
                 if scenario == 'live-seats':
                     self.step('seats.spec', self.seats_spec)
                     self.step('seats.go_worker_delivery', self.seats_go)
@@ -841,6 +938,7 @@ def main():
     parser.add_argument('--live-max-calls', type=int, default=80)
     parser.add_argument('--live-timeout', type=int, default=900, help='Seconds to wait for live delegation delivery')
     parser.add_argument('--repeat', type=int, default=1, help='Independent isolated runs; live budget applies per run')
+    parser.add_argument('--handoff-mode', choices=HANDOFF_MODES, default='auto', help='Seat context handoff (live-seats/live-fidelity)')
     args = parser.parse_args()
     binaries = {name: shutil.which(command) for name, command in
                 [('herdr','herdr'), ('pi','pi'), ('python','python3'), ('node','node')]}
@@ -864,7 +962,7 @@ def main():
         except (ValueError, RuntimeError) as error:
             parser.error(str(error))
         live = {'model': args.live_model, 'thinking': thinking, 'budget_usd': args.live_budget_usd,
-                'max_calls': args.live_max_calls, 'timeout': args.live_timeout}
+                'max_calls': args.live_max_calls, 'timeout': args.live_timeout, 'handoff_mode': args.handoff_mode}
     if not args.run:
         print(json.dumps({'mode': 'plan_only', 'binaries': binaries, 'scenario': args.scenario,
                           'live': live and {key: live[key] for key in ('model', 'thinking', 'budget_usd', 'max_calls')},

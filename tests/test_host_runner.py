@@ -322,6 +322,22 @@ class LiveProviderTests(unittest.TestCase):
                          ['isolation.prepare', 'host.start_and_load', 'live.architect_roundtrip', 'seats.spec',
                           'seats.go_worker_delivery', 'live.architect_report', 'seats.panes_closed'])
 
+    def test_live_fidelity_steps_and_handoff_mode_reaches_seat_panes(self):
+        host = host_runner.HostTest({key: '/test-bin/' + key for key in ('herdr', 'pi', 'python', 'node')},
+                                    live=dict(LIVE, handoff_mode='brief'), credential={'cheap': {'type': 'api_key', 'key': SECRET}})
+        self.addCleanup(shutil.rmtree, host.root)
+        self.assertEqual(host.env['SHOP_HANDOFF_MODE'], 'brief')
+        self.assertEqual(host.report['live']['handoff_mode'], 'brief')
+        for name in ('prepare', 'start', 'live_roundtrip', 'setup', 'fidelity_discussion', 'fidelity_go', 'fidelity_check', 'seats_closed'):
+            setattr(host, name, Mock())
+        host.cleanup = Mock(return_value=True)
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(host.run('live-fidelity'), 0)
+        host.setup.assert_not_called()
+        self.assertEqual([step['name'] for step in host.steps],
+                         ['isolation.prepare', 'host.start_and_load', 'live.architect_roundtrip', 'fidelity.discussion',
+                          'fidelity.go', 'fidelity.check', 'seats.panes_closed'])
+
     def test_live_seats_load_a_private_snapshot_not_the_checkout(self):
         host = self.live_host()
         self.assertTrue(host.package.is_relative_to(host.root))

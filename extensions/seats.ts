@@ -10,7 +10,7 @@ import { promisify } from "node:util";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { readBridge } from "./bridge.js";
-import { curateToChildSession, type CurationResult } from "./seat-curation.js";
+import { HANDOFF_MODES, handoffToChildSession, type HandoffMode, type HandoffResult } from "./seat-curation.js";
 
 const run = promisify(execFile);
 const PACKAGE = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -19,7 +19,7 @@ const RUN_ENTRY = "shop-seat-run";
 export type SeatRole = "lead" | "worker";
 export type SeatRecord = {
   id: string; role: SeatRole; pane: string; parent_pane: string; parent_id: string;
-  session: string; model: string; thinking?: string; curation: Omit<CurationResult, "file">; started_at: string;
+  session: string; prompt: string; model: string; thinking?: string; handoff: Omit<HandoffResult, "file">; started_at: string;
 };
 export type SeatReport = { id: string; role: SeatRole; status: string; summary: string; evidence?: string; at: string };
 type Profile = { model: string; thinking?: string | null };
@@ -73,17 +73,28 @@ async function seatProfiles(): Promise<Record<string, Profile>> {
   return JSON.parse(stdout);
 }
 
+function handoffMode(): HandoffMode {
+  const mode = (process.env.SHOP_HANDOFF_MODE || "auto") as HandoffMode;
+  if (!HANDOFF_MODES.includes(mode)) throw new Error("SHOP_HANDOFF_MODE must be one of " + HANDOFF_MODES.join(", "));
+  return mode;
+}
+
 function newRunId(): string {
   const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\..*/, "").replace("T", "-");
   return `${stamp}-${randomBytes(3).toString("hex")}`;
 }
 
-/** Open a pane next to `anchor`, start Pi on the curated child session, and kick it off. */
+/** Open a pane next to `anchor`, start Pi on the child session with the brief pinned in its system prompt. */
 async function spawnSeat(options: {
   runDir: string; id: string; role: SeatRole; anchor: string; direction: "right" | "down"; cwd: string;
-  parentId: string; profile: Profile; curation: CurationResult;
+  parentId: string; profile: Profile; handoff: HandoffResult; brief: string;
 }): Promise<SeatRecord> {
-  const { runDir, id, role, profile, curation } = options;
+  const { runDir, id, role, profile, handoff } = options;
+  // System prompt survives the seat's own auto-compaction; session messages may not.
+  const prompt = join(runDir, "prompts", id + ".md");
+  mkdirSync(dirname(prompt), { recursive: true, mode: 0o700 });
+  writeFileSync(prompt, readFileSync(join(PACKAGE, "roles", `seat-${role}.md`), "utf8") + "\n\n" + options.brief + "\n",
+    { mode: 0o600 });
   const parentPane = process.env.HERDR_PANE_ID;
   if (!parentPane) throw new Error("Not running inside a Herdr pane");
   const env = { SHOP_SEAT_ROLE: role, SHOP_SEAT_RUN: runDir, SHOP_SEAT_ID: id, SHOP_SEAT_PARENT_PANE: parentPane };
@@ -92,16 +103,16 @@ async function spawnSeat(options: {
   const pane = split.pane?.pane_id;
   if (!pane) throw new Error("herdr pane split returned no pane");
   const seat: SeatRecord = {
-    id, role, pane, parent_pane: parentPane, parent_id: options.parentId, session: curation.file,
+    id, role, pane, parent_pane: parentPane, parent_id: options.parentId, session: handoff.file, prompt,
     model: profile.model, ...(profile.thinking ? { thinking: profile.thinking } : {}),
-    curation: (({ file: _file, ...rest }) => rest)(curation), started_at: new Date().toISOString(),
+    handoff: (({ file: _file, ...rest }) => rest)(handoff), started_at: new Date().toISOString(),
   };
   atomicJson(join(runDir, "seats", id + ".json"), seat);
   const name = `seat-${runDir.split("/").pop()!.slice(-6)}-${id}`.toLowerCase().replace(/[^a-z0-9-]/g, "-");
   await herdr("agent", "start", name, "--kind", "pi", "--pane", pane, "--timeout", "120000", "--",
-    "--session", curation.file, "--model", profile.model, ...(profile.thinking ? ["--thinking", profile.thinking] : []),
-    "--append-system-prompt", join(PACKAGE, "roles", `seat-${role}.md`));
-  await herdr("agent", "prompt", pane, "Start now: follow the Shop brief at the end of your context.");
+    "--session", handoff.file, "--model", profile.model, ...(profile.thinking ? ["--thinking", profile.thinking] : []),
+    "--append-system-prompt", prompt);
+  await herdr("agent", "prompt", pane, "Start now: follow the Shop brief in your system prompt.");
   return seat;
 }
 
@@ -154,16 +165,17 @@ export function registerSeats(pi: ExtensionAPI): void {
       const lead = profiles.lead;
       if (ctx.hasUI && !await ctx.ui.confirm("Launch Lead?", `${dir}\nLead: ${lead.model} (${lead.thinking ?? "default"})\n` +
         `Curator analyzer: ${profiles.worker.model}`)) return;
-      ctx.ui.setStatus("shop-seats", "Curating context for Lead…");
+      ctx.ui.setStatus("shop-seats", "Handing context to Lead…");
       try {
-        const curation = await curateToChildSession(ctx, {
+        const handoff = await handoffToChildSession(ctx, {
           focus: "Lead: decompose PLAN.md into Worker tasks, dispatch, review, report", instruction: LEAD_INSTRUCTION,
-          analyzerModel: profiles.worker.model, sessionDir: join(dir, "sessions"), name: "Shop Lead", brief: leadBrief(dir),
+          analyzerModel: profiles.worker.model, receiverModel: lead.model, sessionDir: join(dir, "sessions"),
+          name: "Shop Lead", mode: handoffMode(),
         });
         const seat = await spawnSeat({ runDir: dir, id: "lead", role: "lead", anchor: process.env.HERDR_PANE_ID!,
-          direction: "right", cwd: ctx.cwd, parentId: "architect", profile: lead, curation });
-        ctx.ui.notify(`Lead started in ${seat.pane} (${curation.curated ? `curated ${curation.sourceTokens}→${curation.checkpointTokens} tokens` :
-          "brief only"}). Keep talking here; its report will arrive as a message.`, "info");
+          direction: "right", cwd: ctx.cwd, parentId: "architect", profile: lead, handoff, brief: leadBrief(dir) });
+        ctx.ui.notify(`Lead started in ${seat.pane} (context ${handoff.mode}: ${handoff.reason}). ` +
+          "Keep talking here; its report will arrive as a message.", "info");
       } finally {
         ctx.ui.setStatus("shop-seats", undefined);
       }
@@ -212,15 +224,15 @@ export function registerSeats(pi: ExtensionAPI): void {
     execute: async (_id, args, signal, _update, ctx) => {
       if (existsSync(join(runDir, "seats", args.id + ".json")) || args.id === "lead") throw new Error("Seat id already used: " + args.id);
       const profiles = await seatProfiles();
-      const curation = await curateToChildSession(ctx, {
+      const handoff = await handoffToChildSession(ctx, {
         focus: `Worker task ${args.id}: ${args.task.slice(0, 600)}`, instruction: WORKER_INSTRUCTION,
-        analyzerModel: profiles.worker.model, sessionDir: join(runDir, "sessions"), name: `Shop Worker ${args.id}`,
-        brief: `# Shop task ${args.id} (Worker)\nRun directory: ${runDir}\n\n${args.task}\n\nFinish with shop_report exactly once.`,
-        signal,
+        analyzerModel: profiles.worker.model, receiverModel: profiles.worker.model, sessionDir: join(runDir, "sessions"),
+        name: `Shop Worker ${args.id}`, mode: handoffMode(), signal,
       });
       const seat = await spawnSeat({ runDir, id: args.id, role: "worker", anchor: process.env.HERDR_PANE_ID!,
-        direction: "down", cwd: ctx.cwd, parentId: seatId, profile: profiles.worker, curation });
-      return { content: [{ type: "text" as const, text: JSON.stringify({ id: args.id, pane: seat.pane, curated: curation.curated }) }],
+        direction: "down", cwd: ctx.cwd, parentId: seatId, profile: profiles.worker, handoff,
+        brief: `# Shop task ${args.id} (Worker)\nRun directory: ${runDir}\n\n${args.task}\n\nFinish with shop_report exactly once.` });
+      return { content: [{ type: "text" as const, text: JSON.stringify({ id: args.id, pane: seat.pane, context: handoff.mode }) }],
         details: seat };
     } });
 
