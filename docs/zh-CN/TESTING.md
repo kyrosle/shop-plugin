@@ -81,6 +81,20 @@ python3 tests/host/run.py --run --scenario live-smoke \
 - 真实席位启用 Pi 内置工具，模型可以执行命令。席位加载测试根目录下的源码私有副本（`node_modules` 为软链接），Shop 路径不会指向你的工作区。隔离仍是配置/进程隔离，不是操作系统沙箱。
 - `npm run` 优先使用仓库内的 Pi；真实模型需要更新的 Pi 模型表时传 `--pi-bin`。
 
+### 一次性席位场景
+
+这些场景在相同的隔离、凭据与预算规则下测试[一次性席位](SEATS.md)：
+
+| 场景 | 通过条件 |
+| --- | --- |
+| `live-seats` | `/shop-go <目标>`（或 `--seats-flow two-step`：先 `/shop-spec` 再确认 `/shop-go`）经由 Worker 交付，Architect 汇报 fixture 内容，所有席位 pane 关闭且 session 保留。任务与 `live-delegation` 相同，便于对比 |
+| `live-fidelity` | Architect 的真实对话定下一条约束并否决一个方案，固定写入的 SPEC/PLAN 故意不写；约定的 `report.json` 必须写入仓库。使用 `--handoff-mode brief` 时，预期结果是如实报告 `blocked` 且不产出文件。任何席位读取 Pi session 文件都会判为失败 |
+| `live-parallel` | 两个相互独立的 Worker 结果都正确，且执行时间有重叠 |
+| `live-failure` | `--failure-case missing`：输入缺失时以 `blocked` 结束，不伪造文件；`--failure-case lost`：Worker pane 中途被关闭时能被发现，Lead 要么恢复、要么报告失败。调用次数不超过上限 |
+| `live-task` | 预置一个有真实 bug 和新功能需求的小模块：项目测试、runner 持有的隐藏测试和原有测试必须全部通过 |
+
+参数：`--handoff-mode auto|raw|curate|brief`；`--fidelity-size large`（先读约 90 KB 背景文档，使交接落在中间区间）；`--handoff-budget-tokens N`（缩小接收方预算以强制压缩）；`--live-seat-models architect=p/m,lead=p/m,worker=p/m`（每个 provider 只复制一份 API key 凭据，拒绝 OAuth）。curator 分析模型的调用会单独计量，作为 `curator` 席位报告。
+
 ## 证据与清理
 
 每次打印 `Artifacts: <私有目录>`。`report.json` 包含各阶段结果、版本、覆盖边界、Provider 调用次数及清理结果。另保留 `commands.jsonl`、`server.log`、成员观测、私有原生插件日志、重置归档和收工计划。证据含本机路径和终端文字，分享前先检查。

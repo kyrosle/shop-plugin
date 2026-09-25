@@ -81,6 +81,20 @@ python3 tests/host/run.py --run --scenario live-smoke \
 - Live seats run with Pi's built-in tools enabled, so models can execute commands. They load a private copy of the checkout under the test root (`node_modules` is symlinked), so Shop paths never point into your working tree. Isolation is still configuration/process isolation, not an OS sandbox.
 - `npm run` prefers the repository's Pi copy; pass `--pi-bin` when the live model needs a newer Pi registry.
 
+### Ephemeral-seat scenarios
+
+These exercise [ephemeral seats](SEATS.md) with the same isolation, credential and budget rules:
+
+| Scenario | Passes when |
+| --- | --- |
+| `live-seats` | `/shop-go <goal>` (or `--seats-flow two-step`: `/shop-spec` then confirmed `/shop-go`) delivers through a Worker, Architect reports the fixture content, and every seat pane closes with its session kept. Same task as `live-delegation`, for comparison |
+| `live-fidelity` | Real Architect turns set a constraint and reject an alternative that fixed SPEC/PLAN omit; the agreed `report.json` must reach the repository. With `--handoff-mode brief` the expected result is an honest `blocked` report without output. Any seat reading Pi session files fails the run |
+| `live-parallel` | Two independent Worker results are correct and the Workers overlapped in time |
+| `live-failure` | `--failure-case missing`: a missing input ends in `blocked` without fabricated files; `--failure-case lost`: a Worker pane closed mid-task is detected, and the Lead either recovers or reports failure. Call counts stay under limits |
+| `live-task` | A seeded module with a real bug and a feature request: the project suite, hidden tests held by the runner, and the original tests must all pass |
+
+Options: `--handoff-mode auto|raw|curate|brief`, `--fidelity-size large` (reads ~90 KB of background notes to land in the middle handoff band), `--handoff-budget-tokens N` (shrinks the receiver budget to force curation), `--live-seat-models architect=p/m,lead=p/m,worker=p/m` (one API-key credential per provider is copied; OAuth is refused). Curator analyzer calls are metered and reported as their own `curator` seat.
+
 ## Evidence and cleanup
 
 Every run prints `Artifacts: <private directory>`. `report.json` contains per-stage outcomes, versions, coverage boundary, provider-call count and cleanup result. Additional evidence includes `commands.jsonl`, `server.log`, member observations, private native plugin logs, reset archives and shutdown plans. Artifacts contain machine paths and terminal text; inspect before sharing.
