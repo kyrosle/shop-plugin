@@ -4,20 +4,18 @@ import { getSupportedThinkingLevels, clampThinkingLevel } from "@earendil-works/
 import { Key, matchesKey, SettingsList, type Component, type SettingsListTheme } from "@earendil-works/pi-tui";
 import { panelFrame, type FrameTheme } from "./ui-frame.js";
 import { selectModel } from "./model-picker.js";
-import { readBridge } from "./bridge.js";
 import { configCall, configContext, configRequest, SESSION_CONFIG, SEATS, sessionSettings,
-  type ConfigView, type Overrides, type Profiles, type Scope, type Seat, type Thinking,
-  ConfigPublisher } from "./configuration.js";
+  type ConfigView, type Overrides, type Profiles, type Scope, type Seat, type Thinking } from "./configuration.js";
 
 const SCOPES: Scope[] = ["global", "project", "session"];
 const scopeLabels = () => ({ global: t("Global"), project: t("Project"), session: t("Session") });
-const seatLabels = () => ({ lead: t("Primary Lead"), "lead-2": t("Auxiliary Lead"),
+const seatLabels = () => ({ lead: t("Lead"),
   worker: t("Fast Worker (low cost)"), "worker-2": t("Steady Worker (reliable)") });
 type Result = { type: "cancel" | "save" | "reset" | "scope" } | { type: "edit"; seat: Seat; field: "model" | "thinking" };
 
 /** Uses Pi's SettingsList for navigation/scrolling; outer keys match Curator. */
 export function settingsPanel(scope: Scope, target: string, draft: Profiles, view: ConfigView,
-  done: (result: Result) => void, requestRender: () => void, availableScopes: Scope[], existingShop: boolean,
+  done: (result: Result) => void, requestRender: () => void, availableScopes: Scope[],
   listTheme: SettingsListTheme, selectedId?: string, theme: FrameTheme = { fg: (_color, text) => text }): Component {
   const layer = view.layers[scope];
   const rows = SEATS.flatMap(seat => (["model", "thinking"] as const).map(field => {
@@ -53,7 +51,7 @@ export function settingsPanel(scope: Scope, target: string, draft: Profiles, vie
       return panelFrame(t("Shop settings"), [t("Scope: {0}", [tabs]), theme.fg("dim", target),
         theme.fg("muted", t("Architect: current Pi; change with /model and /thinking")), "",
         ...list.render(Math.max(4, width - 4)).filter(line => line.trim()), "",
-        theme.fg("muted", existingShop ? t("Existing Shop snapshots stay unchanged; saves affect new Shops only") : t("Saves affect new Shops only; no panes are opened automatically")),
+        theme.fg("muted", t("Saves apply to the next /shop-go; running seats are unchanged")),
         theme.fg("dim", t("Tab scope · Enter edit · S preview save · R reset scope · Esc cancel"))], width, theme);
     },
   };
@@ -77,38 +75,33 @@ export function validateModels(ctx: ExtensionCommandContext, profiles: Profiles)
   }
 }
 
-export async function editConfiguration(pi: ExtensionAPI, ctx: ExtensionCommandContext,
-  publisher: ConfigPublisher, args = ""): Promise<void> {
+export async function editConfiguration(pi: ExtensionAPI, ctx: ExtensionCommandContext, args = ""): Promise<void> {
   if (!ctx.hasUI || ctx.mode !== "tui") { ctx.ui.notify(t("/shop-config requires Pi TUI"), "warning"); return; }
   if (!ctx.isIdle()) { ctx.ui.notify(t("Wait for the current turn to finish before configuring Shop. Nothing saved."), "warning"); return; }
   if (args && args !== "migrate") { ctx.ui.notify(t("Usage: /shop-config [migrate]"), "info"); return; }
-  const bridge = readBridge();
-  if (!bridge) throw new Error(t("Shop bridge unconfigured; run core/plugin.py configure first"));
-  const context = configContext(bridge, ctx);
+  const context = configContext(ctx);
   const capturedId = ctx.sessionManager.getSessionId();
   const session = sessionSettings(ctx.sessionManager.getBranch(), context.root);
-  const signal = publisher.signal;
+  const signal = new AbortController().signal;
   const guard = () => {
     if (signal.aborted || ctx.sessionManager.getSessionId() !== capturedId || !ctx.isIdle())
       throw new Error(t("Session/turn changed; nothing saved. Reopen /shop-config"));
-    if (JSON.stringify(readBridge()) !== JSON.stringify(bridge)) throw new Error(t("Shop bridge changed; nothing saved. Reopen the panel"));
-    const current = configContext(bridge, ctx);
+    const current = configContext(ctx);
     if (JSON.stringify(current) !== JSON.stringify(context)
         || sessionSettings(ctx.sessionManager.getBranch(), current.root).marker !== session.marker)
       throw new Error(t("Project, trust, branch settings or Shop changed; nothing saved. Reopen /shop-config"));
   };
   const base = configRequest(context, session.overrides);
-  const view = await configCall<ConfigView>(pi, bridge, { ...base, action: "load" });
+  const view = await configCall<ConfigView>(pi, { ...base, action: "load" });
   guard();
   if (args === "migrate") {
     const request = { ...base, action: "migrate", revisions: view.revisions };
-    const preview = await configCall<{ proposed: unknown; backup: string }>(pi, bridge, request);
+    const preview = await configCall<{ proposed: unknown; backup: string }>(pi, request);
     guard();
-    if (!await ctx.ui.confirm(t("Migrate legacy models.json?"), t("{0}\nOriginal file retained: {1}\nExisting Shops stay unchanged.", [JSON.stringify(preview.proposed, null, 2), preview.backup]), { signal })) return;
+    if (!await ctx.ui.confirm(t("Migrate legacy models.json?"), t("{0}\nOriginal file retained: {1}", [JSON.stringify(preview.proposed, null, 2), preview.backup]), { signal })) return;
     guard();
-    await configCall(pi, bridge, { ...request, apply: true });
+    await configCall(pi, { ...request, apply: true });
     ctx.ui.notify(t("Migrated to settings.json; legacy models.json retained, no further dual writes."), "info");
-    await publisher.start(ctx);
     return;
   }
   const scopes = SCOPES.filter(s => s !== "project" || context.trusted);
@@ -130,7 +123,7 @@ export async function editConfiguration(pi: ExtensionAPI, ctx: ExtensionCommandC
         signal.addEventListener("abort", abort, { once: true });
         if (signal.aborted) abort();
         return settingsPanel(scope, target + (view.legacy ? " · legacy：/shop-config migrate" : ""), draft, view,
-          finish, () => tui.requestRender(), scopes, context.existingShop, {
+          finish, () => tui.requestRender(), scopes, {
             label: (text, selected) => theme.fg(selected ? "accent" : "text", text),
             value: (text, selected) => theme.fg(selected ? "accent" : "muted", text),
             description: text => theme.fg("muted", text), hint: text => theme.fg("dim", text), cursor: "› ",
@@ -172,22 +165,21 @@ export async function editConfiguration(pi: ExtensionAPI, ctx: ExtensionCommandC
     const reset = result.type === "reset";
     if (!reset) validateModels(ctx, draft);
     const request = { ...base, action: "prepare", scope, revisions: view.revisions, draft, reset };
-    const prepared = await configCall<{ overrides: Overrides }>(pi, bridge, request);
+    const prepared = await configCall<{ overrides: Overrides }>(pi, request);
     guard();
     if (!await ctx.ui.confirm(reset ? t("Clear model overrides in this scope?") : t("Save Shop configuration?"),
-      t("{0} · {1}\nOld overrides: {2}\nNew overrides: {3}\nAffects new Shops only; existing Shops stay unchanged.", [scopeLabels()[scope], target, JSON.stringify(view.layers[scope].overrides), JSON.stringify(prepared.overrides)]), { signal })) continue;
+      t("{0} · {1}\nOld overrides: {2}\nNew overrides: {3}\nApplies to the next /shop-go; running seats are unchanged.", [scopeLabels()[scope], target, JSON.stringify(view.layers[scope].overrides), JSON.stringify(prepared.overrides)]), { signal })) continue;
     guard();
     if (!reset) validateModels(ctx, draft);
     if (scope === "session") {
       // Recheck file generations after confirmation, then only append metadata.
-      const verified = await configCall<{ overrides: Overrides }>(pi, bridge, request);
+      const verified = await configCall<{ overrides: Overrides }>(pi, request);
       guard();
       pi.appendEntry(SESSION_CONFIG, { version: 1, project_root: context.root, overrides: verified.overrides });
     } else {
-      await configCall(pi, bridge, { ...request, action: "save" });
+      await configCall(pi, { ...request, action: "save" });
     }
-    ctx.ui.notify(t("{0} settings saved; applies to new Shops. Existing Shops unchanged.", [scopeLabels()[scope]]), "info");
-    await publisher.start(ctx);
+    ctx.ui.notify(t("{0} settings saved; applies to the next /shop-go.", [scopeLabels()[scope]]), "info");
     return;
   }
 }

@@ -5,7 +5,7 @@ Default is a plan. --run creates a private headless server, real Pi PTYs and a
 throwaway Git project. A failed host assertion is a nonzero exit, never a skip.
 Artifacts remain outside the repository; only this run's server is stopped.
 
-Live scenarios (live-smoke, live-delegation) are the only paid path: they need
+Live scenarios (live-seats and the other live-*) are the only paid path: they need
 an explicit --live-model, copy exactly one API-key credential (never OAuth) into
 the private root, enforce a cost/call budget and delete the credential afterwards.
 """
@@ -26,24 +26,20 @@ import time
 import uuid
 
 REPO = Path(__file__).resolve().parents[2]
-REQUIRED_COMMANDS = {'shop', 'shop-ui', 'shop-config', 'shop-language', 'shop-status', 'shop-reset'}
+REQUIRED_COMMANDS = {'shop-go', 'shop-spec', 'shop-config', 'shop-language'}
+SCENARIOS = ('startup',)
 FIXTURE_MODEL = 'shop-host-fixture/no-network'
 THINKING_LEVELS = ('off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max')
-LIVE_SCENARIOS = ('live-smoke', 'live-delegation', 'live-seats', 'live-fidelity', 'live-parallel', 'live-failure', 'live-task')
+LIVE_SCENARIOS = ('live-seats', 'live-fidelity', 'live-parallel', 'live-failure', 'live-task')
 SEATS = ('architect', 'lead', 'worker')
 HANDOFF_MODES = ('auto', 'raw', 'curate', 'brief')
 LIVE_TOKEN = 'SHOP_LIVE_OK'
 FIXTURE_TEXT = 'Host smoke fixture; no business repository.'
-# Same work as LIVE_TASK, phrased for the ephemeral-seat flow (/shop-spec, /shop-go).
+# One fixture-reading task delivered through a Worker; the same task backs the recorded baselines.
 SEATS_TASK = ('Delegation test. A Worker must read fixture.txt in this repository and report in one sentence '
               'what it says. The Lead must dispatch it with shop_spawn_worker and must not read the file itself. '
               'Do not modify files.')
 # Deliberately forces the Worker path: a trivial task lets Lead do it alone.
-LIVE_TASK = ('Delegation test. The primary Lead must dispatch this as one analysis ticket to the Worker '
-             'with shop_dispatch (not do it itself), then review and accept the Worker result. '
-             'Task: read fixture.txt in this repository and report in one sentence what it says. '
-             'Do not modify files.')
-
 
 def mentions_fixture(text):
     """Models wrap Markdown lines; compare with whitespace and case normalized."""
@@ -262,9 +258,8 @@ def isolated_env(root, paths):
         'HERDR_SOCKET_PATH': str(root / 'herdr/h.sock'),
         'PI_CODING_AGENT_DIR': str(root / 'pi'), 'PI_CODING_AGENT_SESSION_DIR': str(root / 'sessions'),
         'PI_OFFLINE': '1', 'PI_TELEMETRY': '0', 'PI_SKIP_VERSION_CHECK': '1',
-        'SHOP_LOCATOR': str(root / 'bridge.json'), 'SHOP_CONFIG_DIR': str(root / 'config'),
-        'SHOP_STATE_DIR': str(root / 'state'), 'SHOP_HOST_TEST_ROOT': str(root),
-        'SHOP_HERDR_BIN': str(root / 'bin/herdr-proxy'), 'GIT_CONFIG_NOSYSTEM': '1',
+        'SHOP_CONFIG_DIR': str(root / 'config'),
+        'SHOP_STATE_DIR': str(root / 'state'), 'SHOP_HOST_TEST_ROOT': str(root), 'GIT_CONFIG_NOSYSTEM': '1',
         'GIT_CONFIG_GLOBAL': str(root / 'empty-gitconfig'), 'GIT_OPTIONAL_LOCKS': '0',
         'PYTHONDONTWRITEBYTECODE': '1', 'NO_COLOR': '1',
     }
@@ -441,23 +436,6 @@ resume_agents_on_restore = false
         wrapper = self.root / 'bin/pi'
         wrapper.write_text('#!/bin/sh\nexec ' + shlex.join(args) + ' "$@"\n')
         wrapper.chmod(0o700)
-        # Fault scenario executes the REAL mutation once, then corrupts only its reply.
-        proxy = self.root / 'bin/herdr-proxy'
-        proxy.write_text('#!' + self.binaries['python'] + '\n' + f'''
-import json, os, pathlib, subprocess, sys
-root = pathlib.Path({str(self.root)!r})
-assert os.environ.get('HERDR_SOCKET_PATH') == str(root/'herdr/h.sock')
-r = subprocess.run([{self.binaries['herdr']!r}, *sys.argv[1:]], capture_output=True)
-flag = root/'fail-rename-once'
-if r.returncode == 0 and sys.argv[1:3] == ['pane','rename'] and flag.exists():
-    flag.unlink()
-    (root/'fault-original-reply.json').write_bytes(r.stdout)
-    r.stdout = b'{{"result":{{"type":"ok"}}}}'
-sys.stdout.buffer.write(r.stdout); sys.stderr.buffer.write(r.stderr); sys.exit(r.returncode)
-''')
-        proxy.chmod(0o700)
-        write_json(self.root / 'bridge.json', {'protocol': 1, 'core_root': str(self.package),
-                   'config_dir': str(self.root / 'config'), 'state_dir': str(self.root / 'state')})
         if self.live:
             thinking = self.live['thinking']
             seat_models = self.live.get('seat_models') or {}
@@ -507,15 +485,7 @@ sys.stdout.buffer.write(r.stdout); sys.stderr.buffer.write(r.stderr); sys.exit(r
             raise RuntimeError('Server identity check failed')
         if self.api('workspace', 'list')['workspaces']:
             raise RuntimeError('Fresh server unexpectedly has workspaces; no mutation allowed')
-        if self.api('plugin', 'list', '--json')['plugins']:
-            raise RuntimeError('Fresh server unexpectedly has plugins; no mutation allowed')
         self.report['real_herdr'] = True
-        self.command([self.binaries['herdr'], 'plugin', 'link', self.package])
-        # Assert plugin registry stayed under private HOME/config, not user's registry.
-        registry = self.root / 'home/.config/herdr/plugins.json'
-        alternate = self.root / 'herdr/plugins.json'
-        if not registry.exists() and not alternate.exists():
-            raise RuntimeError('Cannot verify private plugin registry location')
         created = self.api('workspace', 'create', '--cwd', str(self.root / 'project'), '--label', 'Shop host test', '--no-focus')
         self.pane, self.tab = created['root_pane']['pane_id'], created['tab']['tab_id']
         self.report.update(pane=self.pane, tab=self.tab)
@@ -530,17 +500,6 @@ sys.stdout.buffer.write(r.stdout); sys.stderr.buffer.write(r.stderr); sys.exit(r
             raise RuntimeError('Architect did not start with requested thinking: ' + str(observed.get('thinking')))
         self.report['real_pi_tui'] = True
         self.api('pane', 'layout', '--pane', self.pane)
-
-    @property
-    def registration(self):
-        key = hashlib.sha256((self.env['HERDR_SOCKET_PATH'] + ':' + self.tab).encode()).hexdigest()[:12]
-        return self.root / 'state/runtime' / (key + '.json')
-
-    def state(self):
-        try:
-            return json.loads(self.registration.read_text())
-        except FileNotFoundError:
-            return None
 
     def slash(self, command):
         # Slash commands do not trigger model turns; --wait would falsely require one.
@@ -598,60 +557,6 @@ sys.stdout.buffer.write(r.stdout); sys.stderr.buffer.write(r.stderr); sys.exit(r
         if after['session'] != before['session'] or after['model'] != 'shop-host-fixture/no-network':
             raise RuntimeError('Shop settings/reload replaced Architect session or model')
 
-    def native_action(self, action, allow_failure=False):
-        if not self.api('agent', 'get', self.pane)['agent']['focused']:
-            raise RuntimeError('Architect is not focused; refusing implicit plugin action target')
-        invoked = self.api('plugin', 'action', 'invoke', action, '--plugin', 'shop.workstation')
-        log_id = invoked['log']['log_id']
-        def finished():
-            logs = self.api('plugin', 'log', 'list', '--plugin', 'shop.workstation', '--limit', '50')['logs']
-            return next((row for row in logs if row['log_id'] == log_id and row['status'] != 'running'), None)
-        result = self.wait(finished, 'Native plugin action did not finish: ' + action, timeout=90)
-        if result.get('status') != 'succeeded' or result.get('exit_code') != 0:
-            if not (allow_failure and result.get('status') == 'failed' and result.get('exit_code')):
-                raise RuntimeError('Native plugin action failed: ' + action + ': ' + str(result))
-        return result
-
-    def setup(self, fault=False):
-        if fault:
-            (self.root / 'fail-rename-once').touch()
-        # Real native action, Shop entrypoint and Herdr adapter. Only the marked
-        # post-mutation fault scenario corrupts one actual response.
-        action_log = self.native_action('open', allow_failure=fault)
-        if fault:
-            if not self.state() or self.state()['phase'] != 'partial':
-                raise RuntimeError('Fault injection did not preserve partial registration')
-            if not (self.root/'fault-original-reply.json').exists():
-                raise RuntimeError('Fault did not follow a real mutation')
-            return
-        if not self.state() or self.state()['phase'] != 'ready':
-            raise RuntimeError('Real setup failed: ' + json.dumps(action_log)[-4000:])
-        state = self.state()
-        members = [state['architect'], state['lead'], *state['workers']]
-        if len(members) != 3:
-            raise RuntimeError('Expected three real members')
-        sessions = []
-        for member in members:
-            live = self.api('agent', 'get', member['pane'])['agent']
-            if live['name'] != member['name'] or live['terminal_id'] != member['terminal_id']:
-                raise RuntimeError('Registered/live identity mismatch')
-            path = self.root / 'observations' / (member['pane'] + '.json')
-            self.wait(path.exists, 'Member extension not loaded')
-            observed = json.loads(path.read_text())
-            role = ('architect' if member['pane'] == state['architect']['pane'] else
-                    'lead' if member['pane'] == state['lead']['pane'] else 'worker')
-            if self.live:
-                expected = (self.architect_model, self.live['thinking'][role])
-                actual = (observed['model'], observed.get('thinking'))
-            else:
-                expected = FIXTURE_MODEL + '-12' if role == 'lead' else FIXTURE_MODEL
-                actual = observed['model']
-            if actual != expected:
-                raise RuntimeError('Member did not use its saved profile: ' + str(observed))
-            sessions.append(observed['session'])
-        if len(set(sessions)) != 3:
-            raise RuntimeError('Member sessions were reused')
-
     def live_roundtrip(self, pane):
         """One real model turn in a pane, proven by the fixture usage ledger."""
         seen = len(self.usage_records())
@@ -664,19 +569,8 @@ sys.stdout.buffer.write(r.stdout); sys.stderr.buffer.write(r.stderr); sys.exit(r
             raise RuntimeError('Live reply came from unexpected model: ' + str(row))
         return row
 
-    def live_members(self):
-        state = self.state()
-        for member in (state['lead'], state['workers'][0]):
-            self.live_roundtrip(member['pane'])
-
-    def seat_usage(self, rows, roles=None):
+    def seat_usage(self, rows, roles):
         """Usage per role; the design-neutral baseline for comparing workflows."""
-        if roles is None:
-            state = self.state() or {}
-            roles = {self.pane: 'architect'}
-            if state.get('lead'):
-                roles[state['lead']['pane']] = 'lead'
-            roles.update({member['pane']: 'worker' for member in state.get('workers', [])})
         seats = {}
         for row in rows:
             seat = seats.setdefault(roles.get(row.get('pane'), 'other'),
@@ -687,34 +581,6 @@ sys.stdout.buffer.write(r.stdout); sys.stderr.buffer.write(r.stderr); sys.exit(r
                 seat[key] += usage.get(source, 0) or 0
             seat['cost_usd'] = round(seat['cost_usd'] + ((usage.get('cost') or {}).get('total', 0) or 0), 6)
         return seats
-
-    def live_delegation(self):
-        """Real /shop loop: Architect -> Lead -> Worker -> accepted ticket + run summary."""
-        # /shop refuses a busy Architect; poll (budget-checked) instead of a long CLI wait.
-        self.wait(lambda: self.api('agent', 'get', self.pane)['agent']['agent_status'] in ('idle', 'done'),
-                  'Architect did not settle before /shop', timeout=120)
-        self.delegation = {'ledger_start': len(self.usage_records()), 'started': time.monotonic()}
-        self.slash('/shop ' + LIVE_TASK)
-        runs = self.root / 'project/.shop/runs'
-        def worker_accepted(run):
-            for path in (run / 'tickets').glob('*.ticket.json'):
-                ticket = json.loads(path.read_text())
-                if ticket.get('status') == 'accepted' and str(ticket.get('owner', '')).endswith('-worker'):
-                    return ticket
-        def delivered():
-            for run in sorted(runs.glob('*/')) if runs.exists() else []:
-                summary = run / 'SUMMARY.md'
-                if summary.exists() and summary.stat().st_size and worker_accepted(run):
-                    return run
-        run = self.wait(delivered, 'No Worker ticket accepted with run SUMMARY.md', timeout=self.live['timeout'])
-        self.delegation['accepted_seconds'] = round(time.monotonic() - self.delegation['started'], 1)
-        summary = (run / 'SUMMARY.md').read_text()
-        self.report['live_delivery'] = {
-            'run': str(run), 'files': sorted(str(path.relative_to(run)) for path in run.rglob('*') if path.is_file()),
-            'accepted_ticket': {key: worker_accepted(run).get(key) for key in ('ticket_id', 'owner', 'status', 'attempt')},
-            'summary_excerpt': summary[:2000]}
-        if not mentions_fixture(summary):
-            raise RuntimeError('SUMMARY.md does not quote the fixture content')
 
     def live_architect_report(self):
         """The loop ends when Architect reports the correct answer back to the user."""
@@ -728,7 +594,7 @@ sys.stdout.buffer.write(r.stdout); sys.stderr.buffer.write(r.stderr); sys.exit(r
         row = self.wait(reported, 'Architect did not report the fixture content back',
                         timeout=max(60, self.live['timeout'] - self.delegation['accepted_seconds']))
         rows = self.usage_records()[start:]
-        roles, seats = None, []
+        roles, seats = {self.pane: 'architect'}, []
         if self.delegation.get('run'):
             seats = [json.loads(path.read_text()) for path in (self.delegation['run'] / 'seats').glob('*.json')]
             roles = {self.pane: 'architect', **{seat['pane']: seat['role'] for seat in seats}}
@@ -742,7 +608,7 @@ sys.stdout.buffer.write(r.stdout); sys.stderr.buffer.write(r.stderr); sys.exit(r
                                 'cache_read': sum(a.get('cacheRead', 0) for a in analyzers),
                                 'cost_usd': round(sum(a.get('cost', 0) for a in analyzers), 6)}
         self.report['baseline'] = {
-            'task': self.delegation.get('task', LIVE_TASK),
+            'task': self.delegation['task'],
             'seconds_to_accepted': self.delegation['accepted_seconds'],
             'seconds_to_report': round(time.monotonic() - self.delegation['started'], 1),
             'seats': usage,
@@ -1007,92 +873,6 @@ sys.stdout.buffer.write(r.stdout); sys.stderr.buffer.write(r.stderr); sys.exit(r
             if not Path(json.loads(path.read_text())['session']).exists():
                 raise RuntimeError('Seat session not retained: ' + path.name)
 
-    def reset_ui(self):
-        before = self.registration.read_bytes()
-        config = (self.root/'config/settings.json').read_bytes()
-        self.slash('/shop-reset')
-        self.wait(lambda: 'Archive failed setup in this tab?' in self.screen(), 'Reset preview not shown')
-        self.api('agent', 'send-keys', self.pane, 'esc')
-        if self.registration.read_bytes() != before:
-            raise RuntimeError('Cancel modified registration')
-        self.slash('/shop-reset')
-        self.wait(lambda: 'Archive failed setup in this tab?' in self.screen(), 'Reset confirm not shown')
-        self.api('agent', 'send-keys', self.pane, 'enter')
-        self.wait(lambda: not self.registration.exists(), 'Confirmed reset did not archive registration')
-        archives = list((self.root/'state/reset-archive').glob('*.json'))
-        if not any(p.read_bytes() == before for p in archives):
-            raise RuntimeError('Exact reset backup missing')
-        if config != (self.root/'config/settings.json').read_bytes():
-            raise RuntimeError('Reset changed configuration')
-        layout = self.api('pane', 'layout', '--pane', self.pane)['layout']
-        if [p['pane_id'] for p in layout['panes']] != [self.pane]:
-            raise RuntimeError('Reset changed pane topology')
-
-    def background_guard(self):
-        state = self.state()
-        original = self.registration.read_bytes()
-        lead = state['lead']['pane']
-        job = self.root/'observations'/(lead + '.job.json')
-        try:
-            self.api('agent', 'prompt', lead, '/shop-host-background-start')
-            self.wait(job.exists, 'Fixture background child did not start')
-            child = json.loads(job.read_text())
-            if not child['running']:
-                raise RuntimeError('Background fixture is not running')
-            self.native_action('close')
-            directory = self.root/'state/shutdown/plans'/state['shop_id']
-            plans = sorted(directory.glob('*.json'), key=lambda p:p.stat().st_mtime_ns)
-            if not plans:
-                raise RuntimeError('Background guard produced no shutdown plan')
-            plan = json.loads(plans[-1].read_text())
-            write_json(self.root/'background-blocked-plan.json', plan)
-            found = [p['pid'] for row in plan.get('facts', {}).get('process', [])
-                     for p in row.get('extra_background', [])]
-            if (plan['decision'] != 'blocked' or child['pid'] not in found
-                    or 'background_work' not in {b['code'] for b in plan['blockers']}):
-                raise RuntimeError('Live background child failed to block shutdown')
-            if self.registration.read_bytes() != original:
-                raise RuntimeError('Blocked shutdown mutated registration')
-            for member in (state['architect'], state['lead'], *state['workers']):
-                if self.api('agent', 'get', member['pane'])['agent']['terminal_id'] != member['terminal_id']:
-                    raise RuntimeError('Blocked shutdown changed a member')
-        finally:
-            self.api('agent', 'prompt', lead, '/shop-host-background-stop')
-            self.wait(lambda: job.exists() and not json.loads(job.read_text())['running'],
-                      'Owned fixture child did not stop')
-
-    def shutdown(self):
-        # Invoke actual user plugin action, not a fake background_proven probe.
-        state = self.state()
-        self.native_action('close')
-        directory = self.root/'state/shutdown/plans'/state['shop_id']
-        self.wait(lambda: list(directory.glob('*.json')), 'Native close action produced no plan')
-        plans = sorted(directory.glob('*.json'), key=lambda p:p.stat().st_mtime)
-        plan = json.loads(plans[-1].read_text())
-        write_json(self.root/'shutdown-plan.json', plan)
-        if plan['decision'] != 'ready':
-            raise RuntimeError('Real idle shutdown gate failed: ' + json.dumps(plan.get('blockers', []), ensure_ascii=False))
-        self.wait(lambda: not self.registration.exists(), 'Shutdown never completed')
-        panes = self.api('pane', 'layout', '--pane', self.pane)['layout']['panes']
-        if [p['pane_id'] for p in panes] != [self.pane]:
-            raise RuntimeError('Shutdown did not retain Architect only')
-        receipt_path = self.root/'state/shutdown/receipts'/(state['shop_id'] + '.json')
-        receipt_bytes = receipt_path.read_bytes()
-        receipt = json.loads(receipt_bytes)
-        expected_closed = {state['lead']['pane'], *(member['pane'] for member in state['workers'])}
-        if (not receipt['registration_removed'] or not receipt['verified_absent']
-                or set(receipt['closed']) != expected_closed or receipt['retained']['pane'] != self.pane):
-            raise RuntimeError('Shutdown receipt does not prove expected closure')
-        # The current CLI rejects missing registration. Verify non-mutation,
-        # but do not misreport that rejection as an already_closed acknowledgement.
-        repeated = self.native_action('close', allow_failure=True)
-        self.report['repeat_shutdown'] = {key: repeated.get(key) for key in ('status', 'exit_code', 'stdout')}
-        if self.registration.exists() or receipt_path.read_bytes() != receipt_bytes:
-            raise RuntimeError('Repeated shutdown changed registration or receipt')
-        panes = self.api('pane', 'layout', '--pane', self.pane)['layout']['panes']
-        if [p['pane_id'] for p in panes] != [self.pane]:
-            raise RuntimeError('Repeated shutdown changed the retained topology')
-
     def cleanup(self):
         # Observe only PIDs reported by this run's explicit fixture extension.
         # Birth stamps prevent PID reuse from being mistaken for leaked Pi. Never
@@ -1144,15 +924,11 @@ sys.stdout.buffer.write(r.stdout); sys.stderr.buffer.write(r.stderr); sys.exit(r
         self.report['scenario'] = scenario
         if self.live:
             self.live['scenario'] = scenario
-        self.report['required_release_scenario'] = 'all'
         try:
             self.step('isolation.prepare', self.prepare)
             self.step('host.start_and_load', self.start)
             if scenario in LIVE_SCENARIOS:
                 self.step('live.architect_roundtrip', lambda: self.live_roundtrip(self.pane))
-                if scenario not in ('live-seats', 'live-fidelity', 'live-parallel', 'live-failure', 'live-task'):
-                    self.step('setup.live_members', self.setup)
-                    self.step('live.member_roundtrip', self.live_members)
                 if scenario == 'live-task':
                     self.step('task.delivery', self.real_task)
                     self.step('live.architect_report_seen', self.architect_answered)
@@ -1173,18 +949,8 @@ sys.stdout.buffer.write(r.stdout); sys.stderr.buffer.write(r.stderr); sys.exit(r
                     self.step('seats.go_worker_delivery', self.seats_go)
                     self.step('live.architect_report', self.live_architect_report)
                     self.step('seats.panes_closed', self.seats_closed)
-                if scenario == 'live-delegation':
-                    self.step('live.delegation_delivery', self.live_delegation)
-                    self.step('live.architect_report', self.live_architect_report)
             else:
                 self.step('pi.commands_configuration_reload', self.configuration_ui)
-            if scenario in ('reset', 'all'):
-                self.step('setup.real_mutation_bad_reply', lambda: self.setup(fault=True))
-                self.step('pi.reset_cancel_confirm', self.reset_ui)
-            if scenario in ('lifecycle', 'all'):
-                self.step('setup.real_three_member_identity', self.setup)
-                self.step('shutdown.real_background_refusal', self.background_guard)
-                self.step('shutdown.real_idle_lifecycle', self.shutdown)
             if (self.root/'provider-calls.jsonl').exists():
                 raise RuntimeError('Unexpected fixture inference in no-inference smoke scenarios')
             self.report['result'] = 'passed'
@@ -1243,7 +1009,7 @@ def aggregate(reports):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--run', action='store_true', help='Explicitly launch owned isolated Herdr/Pi processes')
-    parser.add_argument('--scenario', choices=['startup', 'reset', 'lifecycle', 'all', *LIVE_SCENARIOS], default='all')
+    parser.add_argument('--scenario', choices=[*SCENARIOS, *LIVE_SCENARIOS], default='startup')
     parser.add_argument('--pi-bin', help='Pi executable (default: first pi on PATH; npm run prefers the repo copy)')
     parser.add_argument('--live-model', help='provider/model for live scenarios; required there, refused elsewhere')
     parser.add_argument('--live-seat-models', default='',
@@ -1298,7 +1064,7 @@ def main():
                           'launch': 'Use --run to opt in; no user server inherited' + (
                               '; live copies one API-key credential and spends up to the budget' if live
                               else '; no credentials'),
-                          'required_gate': 'Idle shutdown must pass; live background work must block; neither check is skipped'}, indent=2))
+                          'required_gate': 'Real Pi loads Shop commands; /shop-config, language and reload work without inference'}, indent=2))
         return 0
     if sys.platform != 'darwin':
         parser.error('Live host runner currently validated for macOS only')

@@ -1,33 +1,17 @@
-"""Package resources are read-only; runtime/config live outside either checkout."""
+"""Shop model settings. Package resources are read-only; config/state live outside the package."""
 import json
 import os
 from pathlib import Path
 
 PACKAGE = Path(__file__).resolve().parent.parent
-PROTOCOL = 1
-LOCATOR = Path(os.environ.get('SHOP_LOCATOR', str(Path.home() / '.config/shop-workstation/bridge.json'))).expanduser()
-
-
-def locator():
-    if not LOCATOR.exists():
-        return {}
-    data = json.loads(LOCATOR.read_text())
-    if data.get('protocol') != PROTOCOL:
-        raise RuntimeError('Shop bridge protocol mismatch')
-    if Path(data['core_root']).resolve() != PACKAGE:
-        raise RuntimeError('Another Shop core owns bridge; use configured core or explicitly configure this checkout')
-    return data
-
-
-BRIDGE = locator()
-STATE = Path(os.environ.get('SHOP_STATE_DIR') or BRIDGE.get('state_dir') or
-             str(Path.home() / '.local/state/shop-workstation')).expanduser()
-CONFIG = Path(os.environ.get('SHOP_CONFIG_DIR') or BRIDGE.get('config_dir') or
-              str(Path.home() / '.config/shop-workstation')).expanduser()
+STATE = Path(os.environ.get('SHOP_STATE_DIR') or str(Path.home() / '.local/state/shop-workstation')).expanduser()
+CONFIG = Path(os.environ.get('SHOP_CONFIG_DIR') or str(Path.home() / '.config/shop-workstation')).expanduser()
 
 
 THINKING_LEVELS = ('off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max')
-MODEL_SEATS = ('lead', 'lead-2', 'worker', 'worker-2')
+MODEL_SEATS = ('lead', 'worker', 'worker-2')
+# Read and dropped, never written: the single-Lead seat flow has no auxiliary Lead.
+RETIRED_SEATS = ('lead-2',)
 
 
 def _profile(value, label):
@@ -52,6 +36,8 @@ def _model_layers(data):
     if not isinstance(data, dict) or set(data) - {'defaults', 'lead', 'worker', 'seats'}:
         raise RuntimeError('models.json accepts only defaults, lead, worker and seats; Architect uses Pi /model and /thinking')
     seats = data.get('seats', {})
+    if isinstance(seats, dict):
+        seats = {key: value for key, value in seats.items() if key not in RETIRED_SEATS}
     if not isinstance(seats, dict) or set(seats) - set(MODEL_SEATS):
         raise RuntimeError('models.json seats accepts only: ' + ', '.join(MODEL_SEATS))
     return ({key: _profile(data.get(key, {}), key) for key in ('defaults', 'lead', 'worker')},
@@ -88,16 +74,3 @@ def resolve_models(data):
         result[seat] = profile
     return result
 
-
-def role_text(role):
-    override = CONFIG / 'roles' / (role + '.md')
-    text = (override if override.exists() else PACKAGE / 'roles' / (role + '.md')).read_text()
-    return text.replace('{{WORKFLOW}}', str(PACKAGE / 'docs/en/WORKFLOW.md'))
-
-
-if __name__ == '__main__':
-    # `python3 core/settings.py seats`: resolved per-seat {model, thinking} for extensions.
-    import sys
-    if sys.argv[1:] != ['seats']:
-        raise SystemExit('usage: settings.py seats')
-    print(json.dumps(resolve_models(models())))

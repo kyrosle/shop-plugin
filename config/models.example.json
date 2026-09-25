@@ -1,9 +1,0 @@
-{
-  "defaults": { "thinking": "medium" },
-  "lead": { "model": "your-provider/your-lead-model", "thinking": "high" },
-  "worker": { "model": "your-provider/your-worker-model" },
-  "seats": {
-    "lead-2": { "model": "your-provider/your-review-model", "thinking": "high" },
-    "worker-2": { "model": "your-provider/your-fast-model", "thinking": "low" }
-  }
-}

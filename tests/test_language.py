@@ -19,12 +19,9 @@ class LanguageTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
-        self.locator = self.root / 'bridge.json'
         self.config = self.root / 'config'
         self.path = self.config / 'language.json'
-        self.locator.write_text(json.dumps({'protocol': 1, 'core_root': str(ROOT),
-            'config_dir': str(self.config), 'state_dir': str(self.root / 'state')}))
-        self.env = patch.dict(os.environ, {'SHOP_LOCATOR': str(self.locator), 'LC_ALL': 'en_US.UTF-8'})
+        self.env = patch.dict(os.environ, {'SHOP_CONFIG_DIR': str(self.config), 'LC_ALL': 'en_US.UTF-8'})
         self.env.start()
 
     def tearDown(self):
@@ -134,39 +131,8 @@ class LanguageTests(unittest.TestCase):
         self.assertEqual(language.t('Inherit parent: {0}', 'unchanged {1} 中文 /path', language='zh-CN'),
                          '继承父层：unchanged {1} 中文 /path')
 
-    def test_cli_language_never_probes_herdr_or_creates_runtime(self):
-        for value in [None, 'zh-CN', 'en', 'auto']:
-            args = [str(ROOT / 'bin/herdr-shop'), 'language'] + ([value] if value else [])
-            result = subprocess.run(args, env={**os.environ, 'SHOP_HERDR_BIN': '/nonexistent-herdr'},
-                capture_output=True, text=True, timeout=5)
-            self.assertEqual(result.returncode, 0, result.stderr)
-            document = json.loads(result.stdout)
-            self.assertEqual(document['language'], value or 'auto')
-            self.assertEqual(set(document), {'language', 'effective', 'path', 'revision'})
-        self.assertFalse((self.root / 'state').exists())
-
-    def test_misordered_language_command_cannot_fall_through_to_member_setup(self):
-        for args in [['--dry-run', 'language'], ['--cwd', '/tmp/example', 'language']]:
-            result = subprocess.run([str(ROOT / 'bin/herdr-shop'), *args],
-                env={**os.environ, 'SHOP_HERDR_BIN': '/nonexistent-herdr'}, capture_output=True, text=True, timeout=5)
-            self.assertEqual(result.returncode, 2)
-            self.assertIn('without other Shop flags', result.stderr)
-        self.assertFalse((self.root / 'state').exists())
-        self.assertFalse(self.config.exists())
-
-    def test_help_is_bilingual_but_command_flags_do_not_change(self):
-        for locale, word in [('en', 'Options'), ('zh-CN', '选项')]:
-            self.save(locale)
-            for command in ['bin/herdr-shop', 'bin/shop-run', 'bin/shop-transport']:
-                result = subprocess.run([str(ROOT / command), '--help'], env=os.environ,
-                    capture_output=True, text=True, timeout=5)
-                self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertIn(word, result.stdout)
-                self.assertIn('--help', result.stdout)
-        self.assertFalse((self.root / 'state').exists())
-
     def test_python_owned_message_keys_have_both_translations(self):
-        for path in [ROOT / 'core' / name for name in ('language.py', 'plugin.py', 'shop.py', 'run.py', 'transport_cli.py')]:
+        for path in [ROOT / 'core' / name for name in ('language.py', 'configuration.py', 'settings.py')]:
             tree = ast.parse(path.read_text())
             for call in ast.walk(tree):
                 if isinstance(call, ast.Call) and isinstance(call.func, ast.Name) and call.func.id == 't' and call.args:

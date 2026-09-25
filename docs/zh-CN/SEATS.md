@@ -1,8 +1,8 @@
-# 一次性席位（预览）
+# 一次性席位
 
 [English](../en/SEATS.md) · [README](../../README.zh-CN.md)
 
-这是常驻式 `/shop` 工作台的另一种用法：不预先开 pane，也不需要写工单文件。由你的 Pi（Architect）写一份简短的 SPEC 和 PLAN；之后每个下游席位都在新的 Herdr pane 中启动，用上一级的上下文生成的子 session 开始工作，通过工具汇报一次，然后自己关闭 pane。
+Shop 的工作方式：不预先开 pane，也不需要写工单文件。由你的 Pi（Architect）写一份简短的 SPEC 和 PLAN；之后每个下游席位都在新的 Herdr pane 中启动，用上一级的上下文生成的子 session 开始工作，通过工具汇报一次，然后自己关闭 pane。
 
 ```text
 Architect（你的 Pi、你的模型）
@@ -19,7 +19,7 @@ Lead 的 shop_report → 作为消息送到 Architect → Architect 对照 SPEC 
 
 ## 前提
 
-安装、bridge 与配置和 Shop 相同（见 README）。Lead 与 Worker 的模型和 thinking 档位来自 `/shop-config`；Architect 沿用你当前 Pi 的模型。**不需要**先打开常驻 Shop（Ctrl+B → U），但 Pi 必须运行在 Herdr 中。
+安装 Pi 包（见[安装](INSTALLATION.md)），用 `/shop-config` 选择 Lead 和 Worker 的模型（见[配置](MODELS.md)）。Architect 沿用你当前 Pi 的模型。Pi 必须运行在 Herdr 中。
 
 ## 命令
 
@@ -31,7 +31,7 @@ Lead 的 shop_report → 作为消息送到 Architect → Architect 对照 SPEC 
 
 席位工作期间可以继续和 Architect 对话；Lead 的汇报会作为消息到达，Architect 再对照 SPEC 核对。
 
-席位工具：Lead 有 `shop_spawn_worker`、`shop_wait_workers`（等待时不调用模型；Worker pane 未汇报就关闭时标记为 `lost`）和 `shop_report`；Worker 只有 `shop_report`。席位只加载这些 Shop 工具。
+席位工具：Lead 有 `shop_spawn_worker`（默认 `profile: "fast"`，复杂或关键任务用 `"steady"`）、`shop_wait_workers`（等待时不调用模型；Worker pane 未汇报就关闭时标记为 `lost`）和 `shop_report`；Worker 只有 `shop_report`。席位只加载这些 Shop 工具。
 
 ## 上下文如何交接
 
@@ -49,14 +49,15 @@ Lead 的 shop_report → 作为消息送到 Architect → Architect 对照 SPEC 
 | 路径 | 内容 |
 | --- | --- |
 | `SPEC.md`、`PLAN.md` | Architect 的决定 |
-| `seats/<id>.json` | pane、模型、交接决定（形式、原因、token 数、分析模型用量） |
+| `profiles.json` | 为整个 run 一次性解析的 Lead、快速 Worker、稳健 Worker 模型 |
+| `seats/<id>.json` | pane、模型、Worker 类型、交接决定（形式、原因、token 数、分析模型用量） |
 | `prompts/<id>.md` | 席位的附加系统提示（角色 + 任务说明） |
 | `sessions/*.jsonl` | 每个席位的 session，pane 关闭后保留；可用 `pi --session <文件>` 查看 |
 | `reports/<id>.json` | 每个席位唯一的一次汇报 |
 
 ## 限制
 
-- 预览功能。仅在 macOS 上通过隔离的真实 Provider 测试验证（见[测试](TESTING.md)）。
-- 所有 Worker 共用一个工作区：并行任务不能改同一批文件。没有 worktree 隔离、提交、集成与收工核验；这些仍是常驻 `/shop` 的功能。
+- Alpha。在 macOS 上通过隔离的真实宿主测试验证（见[测试](TESTING.md)）。
+- 所有 Worker 共用一个工作区：并行任务不能改同一批文件。没有 worktree 隔离、自动提交或集成。
 - 已关闭的席位不能恢复；其 session 保留供查看。
 - Lead 汇报时如果 Architect 正忙，汇报会像普通输入一样排队。

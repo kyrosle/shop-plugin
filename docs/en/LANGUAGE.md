@@ -6,7 +6,7 @@ Shop supports English (`en`) and Simplified Chinese (`zh-CN`).
 
 ## Selection
 
-In Herdr Pi:
+In Pi:
 
 ```text
 /shop-language
@@ -16,18 +16,16 @@ In Herdr Pi:
 ```
 
 No argument opens a bilingual selector. Esc cancels without writing. An explicit argument saves that preference.
-A configured bridge is required to save from Pi. Command descriptions and Herdr manifest action titles are bilingual static text; panel contents and notifications use the selected language. Native host buttons/key hints remain controlled by Pi/Herdr.
+Command descriptions are bilingual static text; panel contents and notifications use the selected language. Native host buttons and key hints remain controlled by Pi/Herdr.
 
-Without launching Pi or opening Shop:
+Without launching Pi:
 
 ```sh
-<package>/bin/herdr-shop language
-<package>/bin/herdr-shop language zh-CN
-<package>/bin/herdr-shop language en
-<package>/bin/herdr-shop language auto
+python3 <package>/core/language.py            # show saved/effective language as JSON
+python3 <package>/core/language.py zh-CN      # save a preference
 ```
 
-CLI without an argument returns the saved/effective language, file path and revision as JSON. It does not probe Herdr, launch agents or create run/runtime state.
+The CLI never probes Herdr, starts seats or creates run state.
 
 Resolution:
 
@@ -37,13 +35,13 @@ Resolution:
 
 ## Storage and boundaries
 
-Personal preference: `<bridge.config_dir>/language.json`. With no bridge, the standalone CLI uses `~/.config/shop-workstation/language.json`.
+Personal preference: `~/.config/shop-workstation/language.json` (or `$SHOP_CONFIG_DIR/language.json`).
 
 ```json
 {"version": 1, "language": "auto"}
 ```
 
-This is not a project/session model layer. It never changes `settings.json`, model profiles, startup candidates, tickets, transport or running agents.
+This is not a project/session model layer. It never changes `settings.json`, run profiles or running seats.
 Pi/CLI share the file. Writes use a dedicated lock, content-hash comparison and atomic 0600 replacement. A competing save causes refusal, not silent overwrite. Inspect and reopen after a conflict; no automatic retry.
 Invalid/oversized preferences fall back to system detection for display only. Explicit inspection/saves report the error and do not overwrite the bad file. Missing translations fall back to English.
 Existing dialogs retain their already-rendered choices; reopen panels after changing language. Other Pi processes read the preference on subsequent display operations. No process restart or model call is needed.
@@ -59,7 +57,6 @@ Menus return stable action IDs, never translated text as business operations. En
 ## Documents and validation
 
 [English README](../../README.md) and [Chinese README](../../README.zh-CN.md) link to paired guides under `docs/en/` and `docs/zh-CN/`.
-Runtime role prompts refer to the canonical English workflow; they do not switch policy with display language. Licenses and original third-party attributions are not rewritten as translations.
+Seat role prompts are English and do not change with display language.
 
-Offline tests check catalogue/placeholder parity, fallback, shared Python/TypeScript preferences, concurrent-save refusal, both-language action routing, narrow-screen rendering, links and package contents.
-Real Pi/Herdr rendering, input methods and host UI behavior still require isolated live validation. Offline tests do not constitute that acceptance.
+Offline tests check catalogue/placeholder parity, fallback, shared Python/TypeScript preferences, concurrent-save refusal, narrow-screen rendering, links and package contents. The real-host lane saves and switches language in a real Pi.

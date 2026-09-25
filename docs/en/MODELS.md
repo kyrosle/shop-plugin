@@ -2,135 +2,64 @@
 
 [简体中文](../zh-CN/MODELS.md) · [README](../../README.md)
 
-`/shop-config` manages configuration layers, inheritance, saves and migration.
-Explicit changes to an idle running seat are separate: see [workbench](WORKBENCH.md).
-Interface language is a personal preference, not a model layer: see [language](LANGUAGE.md).
+`/shop-config` chooses the models and thinking levels of the seats Shop starts. Architect is not a Shop seat: it keeps your Pi model; use `/model` and `/thinking`. Interface language is separate: see [language](LANGUAGE.md).
 
-## Pi settings entrypoint
+## Seats
 
-Run `/shop-config` inside Herdr Pi. Requires a configured bridge and Pi TUI; it does not call models, dispatch work or open panes.
+| Seat | Used for |
+| --- | --- |
+| **Lead** (`lead`) | The single Lead of a run: splits PLAN, dispatches, reviews, reports |
+| **Fast Worker** (`worker`) | Every Worker by default: routine tasks, batch edits, fast execution |
+| **Steady Worker** (`worker-2`) | A Worker the Lead starts with `profile: "steady"` for complex, risky or critical tasks |
 
-- Opens the **Session** scope; Tab switches Global / Project / Session.
-- Settings use a titled, bordered panel with scope tabs and a shortcut footer. ↑↓ selects a field; Enter opens the model or thinking-level selector.
-- Model selection has a search input, fuzzy matching across model ID/name/provider, and a fixed viewport of up to 10 rows (smaller on short terminals). ↑↓, PageUp/PageDown and fullscreen mouse wheel scroll results; the selected model name appears below. Enter chooses, Esc/Ctrl+C returns without choosing.
-- Clear model search to access “Inherit parent”. Selection only changes the Shop draft: it does not switch Architect's model, save Pi defaults, refresh providers or call a model. Save/confirmation remains a separate step.
-- Models come from the current Pi's authenticated, available catalogue; thinking choices follow model capabilities.
-- “Inherit parent” removes an override; “Pi default (explicit)” writes `thinking=null`, overriding an explicit parent level.
-- S previews old/new overrides before confirmation; R previews clearing this scope's model group; Esc cancels.
-- Switching scopes retains drafts, but a save writes only the current scope.
-- Each field shows its source, target path/session and the new-Shop-only effect.
-- Untrusted projects cannot use the Project scope. Non-Architect seats can edit preferences, but their session settings do not change the current Shop.
+The names describe intended use, not guarantees about price or quality; choose each model yourself. The curator analyzer that curates large handoffs uses the Fast Worker model.
 
-Architect keeps its native Pi model/session; use `/model` and `/thinking`.
-Saving does not remotely switch running members, restart Pi or change Pi's global defaults.
-The panel exposes the model group only; no setting bypasses identity or stopped-writer checks.
+## The panel
 
-### Worker profile names
+Run `/shop-config` in Pi (TUI required). It does not call models, start seats or open panes.
 
-- **Fast Worker (low cost)** (`worker`): routine tasks, batch edits and fast execution.
-- **Steady Worker (reliable)** (`worker-2`): complex implementation, difficult fixes and critical changes.
+- It opens on the **Session** scope; Tab switches Global / Project / Session. Untrusted projects cannot use the Project scope.
+- ↑↓ selects a field; Enter opens the model picker (search, fuzzy match, fixed 10-row viewport) or the thinking-level list. Choosing only changes the draft.
+- "Inherit parent" removes an override; "Pi default (explicit)" writes `thinking=null`.
+- S previews old/new overrides before confirmation; R previews clearing this scope; Esc cancels. A save writes only the current scope.
+- Models come from the current Pi's authenticated catalogue; thinking choices follow each model's capabilities.
 
-These are intended uses for two profiles of the same Worker role, not different implementations or guarantees about a model's price or quality. Choose each model yourself. Names in the panel and pickers change only presentation: stored IDs, existing profiles, expansion and dispatch rules remain unchanged. Selecting a Worker field shows its purpose description.
+Saving applies to the **next** `/shop-go`. Seats that are already running keep their models.
 
 ## Layers and files
 
 | Scope | Storage |
 | --- | --- |
-| Global | `<bridge.config_dir>/settings.json` |
-| Trusted project | `<Architect project root>/.pi/shop.json` |
-| Session | `shop-settings` custom entry on the current Pi branch |
-| Execution snapshot | `model_profiles` in Shop runtime registration; not a dynamic inheritance layer |
+| Global | `~/.config/shop-workstation/settings.json` (or `$SHOP_CONFIG_DIR`) |
+| Trusted project | `<cwd>/.pi/shop.json` |
+| Session | `shop-settings` custom entry on the current Pi branch (not an LLM message) |
 
-Without a Shop, the project root is the current Pi cwd. With registration, it is the registered cwd, never an auxiliary worktree.
-Pi distributions use their public `CONFIG_DIR_NAME` instead of hard-coding `.pi`. Trust in a different cwd is not borrowed for the registered root.
-Session entries carry `project_root`; they do not cross roots or require scanning session JSONL. Custom entries are not LLM messages.
-
-Field precedence: **session > project > global > built-in**.
-Within each layer: **seat > role > defaults**. Thus a session worker-role setting can override the same field in a global worker-2 seat setting.
-The UI saves only seat fields differing from the parent. Unspecified fields inherit; saving/resetting preserves advanced groups outside models.
-Built-ins specify no model brand; absent thinking is left to Pi.
-
-Replace provider/model placeholders:
+Precedence: **session > project > global**. Inside a layer: **seat > role > defaults**, so `worker` settings also reach `worker-2` unless `worker-2` overrides them. The panel saves only fields that differ from the parent.
 
 ```json
 {
   "version": 1,
   "models": {
     "defaults": { "thinking": "medium" },
-    "lead": { "model": "provider/model-a", "thinking": "high" },
-    "worker": { "model": "provider/model-b" },
-    "seats": {
-      "lead-2": { "model": "provider/model-c", "thinking": "high" },
-      "worker-2": { "model": "provider/model-d", "thinking": "low" }
-    }
+    "lead": { "model": "provider/mid-model", "thinking": "high" },
+    "worker": { "model": "provider/fast-model", "thinking": "low" },
+    "seats": { "worker-2": { "model": "provider/strong-model", "thinking": "high" } }
   }
 }
 ```
 
-Seats: `lead`, `lead-2`, `worker`, `worker-2`. Model strings: at most 512 characters.
-Thinking: `off / minimal / low / medium / high / xhigh / max / null`.
-Keep model and thinking separate instead of appending thinking shorthand to model IDs.
-Partial configuration can be saved, but **all four seats must resolve to models at setup**, including auxiliary seats not yet started.
-Python validates syntax; the UI also validates current availability/capability. Another Pi may have different credentials/catalogue; it validates its actual launch.
+Seats: `lead`, `worker`, `worker-2`. A `lead-2` entry from the earlier alpha is read and ignored, and disappears on the next save. Thinking: `off / minimal / low / medium / high / xhigh / max / null`.
 
-## Saving is not changing running members
+## How a run uses the settings
 
-```text
-Built-in → Global → Trusted project → Architect session
-                                      ↓ new Shop
-                               pinned model_profiles
-                                      ↓ member launch
-                                  launch_profile
-```
+When `/shop-go` starts a Lead, Architect resolves the effective settings (global + project + its session) once and writes them to `<run>/profiles.json`. The Lead and every Worker of that run use that file, so a session override made in Architect applies to the whole run, and editing settings mid-run does not change it.
 
-- Layer saves affect new Shops only.
-- Expansion/recovery uses the existing Shop's pinned snapshot, not freshly edited settings files.
-- `launch_profile` records requested launch parameters, not a live observation. Manual Pi model changes do not rewrite it.
-- `/new`, `/resume`, `/tree` and reload do not modify existing Shops or restart members.
-- `/shop-ui` → Idle-seat configuration is a separate explicit request. The receiving user confirms; public Pi APIs apply it. It can affect only the current session or also that seat's Shop snapshot for future launches. It does not change configuration layers or historical launch parameters. See [workbench](WORKBENCH.md#single-seat-model-requests).
-- Architect remains on native `/model` and `/thinking` and does not accept such requests.
-
-## How setup shortcuts obtain session settings
-
-The Pi extension publishes bounded candidates to `<state_dir>/config-candidates/` every five seconds. They contain configuration and instance metadata, not chats, credentials or full session paths.
-Candidates bind socket/tab/pane/terminal, session, PID, extension instance, project root, trust and session overrides.
-
-Setup checks the original Architect's candidate, identity, live process and 20-second freshness; rereads disk layers; then pins resolved settings and provenance.
-Missing/invalid candidates cause refusal, never silent global-only fallback. Use `/reload` or `/shop-config` in the original Architect before setup.
-Shutdown/reload/session switching removes only this instance's candidate. Crashed-process records do not authorize takeover by age or name.
-This is a same-user coordination protocol, not a malicious-code sandbox or an atomic freeze on manual input in another pane.
+A run fails to start with a clear message if the Lead, Fast Worker or Steady Worker has no model.
 
 ## Legacy migration
 
-`<config_dir>/models.json` remains a read-only compatibility source only when `settings.json` is absent. The panel shows legacy status.
-Run `/shop-config migrate` and confirm the preview:
+If `settings.json` is absent, an older `models.json` in the same directory is read. `/shop-config migrate` previews and writes a new `settings.json`, keeping `models.json` as a backup.
 
-- Creates a new settings.json, never overwrites an existing modern file.
-- Keeps models.json as backup; after migration it is no longer read or dual-written.
-- Does not change current Shops, tickets, sessions or worktrees.
-- A direct Global save with a legacy file asks for migration first; explicit Session/Project overrides remain available.
+## Concurrency
 
-Legacy registrations lacking `model_profiles` pin global compatibility settings on the next explicit launch/recovery; they never pretend to have recovered old Architect session settings.
-
-## Explicit file entrypoint
-
-For a **new** Shop only; explicitly bypasses Project/Session layers:
-
-```sh
-/absolute/package/bin/herdr-shop setup --models-file /absolute/models.json --dry-run
-/absolute/package/bin/herdr-shop setup --models-file /absolute/models.json
-```
-
-The file uses the legacy model-group shape in `config/models.example.json`, not a settings.json wrapper with version/models.
-It is not merged with default configuration. Existing Shops and non-setup commands reject `--models-file`.
-A fresh Architect Pi identity candidate is still required: the file bypasses model layers, not session/process ownership.
-
-## Concurrency and validation
-
-Configuration is capped at 64 KiB. Cooperating writers use a configuration lock and content-hash CAS, including parent layers.
-Concurrent changes refuse the save and require reopening; files are atomically replaced with mode 0600.
-Previews/session saves may create a global configuration lock, never a lock in the business worktree.
-Raw shells and external editors do not participate in that lock; this is not an OS sandbox.
-
-Offline tests cover precedence, inheritance/reset, CAS, migration, UI/branch lifecycle, candidate identity and cross-language consumption.
-Real Pi/Herdr shortcuts, provider permissions and manual session-switch races need separate controlled validation.
+Settings are capped at 64 KiB. Saves use a configuration lock and content-hash compare-and-swap across parent layers. A concurrent change refuses the save and asks you to reopen the panel. Files are replaced atomically with mode 0600.

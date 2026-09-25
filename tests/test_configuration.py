@@ -1,4 +1,4 @@
-"""Scoped config, CAS and startup bridge: offline, no Herdr/Pi processes launched."""
+"""Scoped config and CAS saves: offline, no Herdr/Pi processes launched."""
 import copy
 import json
 import os
@@ -40,6 +40,12 @@ class ConfigFixture(unittest.TestCase):
 
 
 class ConfigurationTests(ConfigFixture):
+    def test_retired_auxiliary_lead_is_read_and_dropped(self):
+        layers, seats = settings._model_layers({'seats': {'lead': {'model': 'p/a'}, 'lead-2': {'model': 'p/b', 'thinking': 'max'},
+                                                          'worker': 'p/c', 'worker-2': 'p/d'}})
+        self.assertEqual(set(seats), {'lead', 'worker', 'worker-2'})
+        self.assertEqual(settings.MODEL_SEATS, ('lead', 'worker', 'worker-2'))
+
     def test_scopes_override_fields_and_higher_role_beats_lower_seat(self):
         self.write(self.global_path, {'version': 1, 'models': {
             'defaults': {'model': 'p/base', 'thinking': 'high'},
@@ -149,59 +155,6 @@ class ConfigurationTests(ConfigFixture):
             self.transaction('save', view, draft=draft)
         with self.assertRaises(RuntimeError):
             self.load(session={'unsafe': True})
-
-
-class CandidateTests(ConfigFixture):
-    def setUp(self):
-        super().setUp()
-        self.write(self.global_path, {'version': 1, 'models': {'defaults': {'model': 'p/global', 'thinking': 'high'}}})
-        self.pane = {'pane_id': 'p1', 'tab_id': 't1'}
-        self.path = cfg.candidate_path(self.root, '/socket', 't1', 'p1')
-        self.record = {'schema': 1, 'socket': '/socket', 'tab': 't1', 'pane': 'p1',
-                       'terminal': 'terminal', 'session_id': 'session', 'instance': 'instance',
-                       'pid': os.getpid(), 'root': str(self.project), 'trusted': True,
-                       'updated_at': time.time(), 'overrides': {'models': {'seats': {'worker-2': {'model': 'p/session'}}}}}
-        self.write(self.path, self.record)
-
-    def api(self, *args):
-        self.assertEqual(args, ('agent', 'get', 'p1'))
-        return {'agent': {'agent': 'pi', 'terminal_id': 'terminal', 'tab_id': 't1'}}
-
-    def startup(self):
-        return cfg.startup_profiles(self.api, self.pane, str(self.project), '/socket', self.root, self.config)
-
-    def test_candidate_consumes_all_layers_and_returns_provenance(self):
-        self.write(self.project_path, {'version': 1, 'models': {'worker': {'thinking': 'low'}}})
-        profiles, source = self.startup()
-        self.assertEqual(profiles['worker-2'], {'model': 'p/session', 'thinking': 'low'})
-        self.assertEqual(source['sources']['worker-2'], {'model': 'session', 'thinking': 'project'})
-        self.assertEqual(source['session_id'], 'session')
-
-    def test_invalid_candidate_identity_timestamp_or_process_refused(self):
-        bad = [('schema', 2), ('terminal', 'other'), ('tab', 'other'), ('pane', 'other'),
-               ('socket', 'other'), ('root', '/different'), ('session_id', ''), ('pid', -1),
-               ('updated_at', time.time() - 60), ('updated_at', time.time() + 60), ('trusted', 'yes')]
-        for field, value in bad:
-            with self.subTest(field=field):
-                self.write(self.path, dict(self.record, **{field: value}))
-                with self.assertRaises(RuntimeError):
-                    self.startup()
-        self.write(self.path, self.record)
-        with patch.object(cfg.os, 'kill', side_effect=ProcessLookupError), self.assertRaisesRegex(RuntimeError, 'process unavailable'):
-            self.startup()
-
-    def test_missing_candidate_never_silently_uses_global(self):
-        self.path.unlink()
-        with self.assertRaisesRegex(RuntimeError, 'Missing Pi settings candidate'):
-            self.startup()
-
-    def test_candidate_change_during_live_check_refused(self):
-        original_api = self.api
-        def api(*args):
-            self.write(self.path, dict(self.record, session_id='replacement'))
-            return original_api(*args)
-        with patch.object(self, 'api', api), self.assertRaisesRegex(RuntimeError, 'changed during setup'):
-            self.startup()
 
 
 if __name__ == '__main__':

@@ -1,9 +1,8 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { createHash } from "node:crypto";
 import { readFileSync, statSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
-import { readBridge } from "./bridge.js";
+import { shopPaths } from "./paths.js";
 
 export type Language = "en" | "zh-CN";
 export type LanguagePreference = Language | "auto";
@@ -18,7 +17,7 @@ export function detectLanguage(env: NodeJS.ProcessEnv): Language {
   return /^zh(?:[-_.@]|$)/i.test(value) ? "zh-CN" : "en";
 }
 export function preferencePath(): string {
-  return join(readBridge()?.config_dir ?? join(homedir(), ".config/shop-workstation"), "language.json");
+  return join(shopPaths().config_dir, "language.json");
 }
 export function readPreference(path = preferencePath()): { language: LanguagePreference; revision: string; path: string } {
   let raw: Buffer;

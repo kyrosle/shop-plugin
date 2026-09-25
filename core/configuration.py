@@ -9,13 +9,11 @@ import os
 from pathlib import Path
 import sys
 import tempfile
-import time
 
 import settings
 
 LIMIT = 65536
 VERSION = 1
-CANDIDATE_TTL = 20
 
 
 def digest(raw):
@@ -63,7 +61,7 @@ def expand(models):
 
 def sparse(draft, parent):
     if not isinstance(draft, dict) or set(draft) != set(settings.MODEL_SEATS):
-        raise RuntimeError('Draft must contain exactly four execution seats')
+        raise RuntimeError('Draft must contain exactly the execution seats: ' + ', '.join(settings.MODEL_SEATS))
     result = {}
     for seat in settings.MODEL_SEATS:
         profile = settings._profile(draft[seat], seat)
@@ -158,7 +156,7 @@ def transaction(request, config_dir=None):
     root, trusted = request['root'], request['trusted']
     project_dir = request.get('project_dir', '.pi')
     locations = paths(root, config_dir or settings.CONFIG, project_dir)
-    # One bridge/config-dir lock serializes participating global/project writers.
+    # One config-dir lock serializes participating global/project writers.
     # Never create lock files in the user's worktree merely to preview/session-save.
     with file_lock(locations['global']):
         view = load(root, trusted, request.get('session', {}), config_dir, project_dir)
@@ -195,65 +193,6 @@ def transaction(request, config_dir=None):
         return {'overrides': overrides, 'scope': scope, 'saved': action == 'save'}
 
 
-def candidate_path(state_dir, socket, tab, pane):
-    key = digest((socket + ':' + tab + ':' + pane).encode())[:24]
-    return Path(state_dir) / 'config-candidates' / (key + '.json')
-
-
-def startup_candidate(api, pane, cwd, socket, state_dir=None):
-    """Read a fresh identity claim; expiry means unknown, never permission to delete."""
-    path = candidate_path(state_dir or settings.STATE, socket, pane['tab_id'], pane['pane_id'])
-    record, revision = read_document(path)
-    if revision == 'missing':
-        raise RuntimeError('Missing Pi settings candidate; /reload or /shop-config in Architect (--models-file does not bypass session ownership)')
-    expected = {'schema': 1, 'socket': socket, 'tab': pane['tab_id'], 'pane': pane['pane_id'],
-                'root': str(Path(cwd).resolve())}
-    if type(record.get('schema')) is not int or any(record.get(key) != value for key, value in expected.items()):
-        raise RuntimeError('Settings candidate identity/root mismatch')
-    now = time.time()
-    updated = record.get('updated_at')
-    if type(updated) not in (float, int) or not 0 <= now - updated <= CANDIDATE_TTL:
-        raise RuntimeError('Settings candidate expired; refresh original Architect Pi')
-    for field in ('terminal', 'session_id', 'instance'):
-        if not isinstance(record.get(field), str) or not 0 < len(record[field]) <= 256:
-            raise RuntimeError('Settings candidate missing ' + field)
-    pid = record.get('pid')
-    if type(pid) is not int or pid <= 0:
-        raise RuntimeError('Settings candidate PID invalid')
-    try:
-        os.kill(pid, 0)
-    except OSError as error:
-        raise RuntimeError('Settings candidate Pi process unavailable') from error
-    live = api('agent', 'get', pane['pane_id'])['agent']
-    if (live.get('agent') != 'pi' or live.get('terminal_id') != record['terminal']
-            or live.get('tab_id') != pane['tab_id']):
-        raise RuntimeError('Settings candidate live instance mismatch')
-    return record
-
-
-def startup_profiles(api, pane, cwd, socket, state_dir=None, config_dir=None):
-    """Consume one recent Pi claim; never read transcripts or guess another pane."""
-    record = startup_candidate(api, pane, cwd, socket, state_dir)
-    path = candidate_path(state_dir or settings.STATE, socket, pane['tab_id'], pane['pane_id'])
-    view = load(cwd, record.get('trusted'), record.get('overrides', {}), config_dir,
-                record.get('project_dir', '.pi'))
-    profiles = settings.resolve_models({'seats': view['layers']['session']['profiles']})
-    latest, _ = read_document(path)
-    stable = ('schema', 'socket', 'tab', 'pane', 'root', 'terminal', 'session_id',
-              'instance', 'pid', 'trusted', 'project_dir', 'overrides', 'settings_entry_id')
-    if any(latest.get(key) != record.get(key) for key in stable):
-        raise RuntimeError('Settings candidate changed during setup; retry explicitly')
-    refreshed = latest.get('updated_at')
-    if type(refreshed) not in (float, int) or not 0 <= time.time() - refreshed <= CANDIDATE_TTL:
-        raise RuntimeError('Settings candidate expired during setup')
-    if load(cwd, record['trusted'], record.get('overrides', {}), config_dir,
-            record.get('project_dir', '.pi'))['revisions'] != view['revisions']:
-        raise RuntimeError('Configuration changed during setup; retry explicitly')
-    return profiles, {'kind': 'pi-scoped', 'session_id': record['session_id'],
-                      'instance': record['instance'], 'root': record['root'],
-                      'revisions': view['revisions'], 'sources': view['layers']['session']['sources']}
-
-
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--request', required=True, help='Bounded JSON request, no credentials')
@@ -263,22 +202,11 @@ def main():
     request = json.loads(args.request)
     for key, actual in (('expected_config_dir', settings.CONFIG), ('expected_state_dir', settings.STATE)):
         if key in request and Path(request[key]).resolve() != actual.resolve():
-            raise RuntimeError('Shop bridge changed; reload configuration')
+            raise RuntimeError('Shop config/state directory changed; reload configuration')
     action = request['action']
     if action == 'load':
         result = load(request['root'], request['trusted'], request.get('session', {}),
                       project_dir=request.get('project_dir', '.pi'))
-    elif action == 'identify':
-        # Reuse the current core's sole Herdr wrapper; never launch/control agents.
-        from shop import api
-        pane = os.environ.get('HERDR_PANE_ID')
-        tab = os.environ.get('HERDR_TAB_ID')
-        if os.environ.get('HERDR_ENV') != '1' or not pane or not tab:
-            raise RuntimeError('Herdr Pi identity required')
-        live = api('agent', 'get', pane)['agent']
-        if live.get('agent') != 'pi' or live.get('tab_id') != tab or not live.get('terminal_id'):
-            raise RuntimeError('Cannot verify current Pi terminal identity')
-        result = {'terminal': live['terminal_id']}
     else:
         result = transaction(request)
     print(json.dumps(result, ensure_ascii=False))

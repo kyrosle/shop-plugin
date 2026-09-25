@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { readBridge } from "./bridge.js";
+import { effectiveProfiles, type Profile } from "./configuration.js";
 import { HANDOFF_MODES, handoffToChildSession, type HandoffMode, type HandoffResult } from "./seat-curation.js";
 
 const run = promisify(execFile);
@@ -18,11 +18,11 @@ const RUN_ENTRY = "shop-seat-run";
 
 export type SeatRole = "lead" | "worker";
 export type SeatRecord = {
-  id: string; role: SeatRole; pane: string; parent_pane: string; parent_id: string;
+  id: string; role: SeatRole; pane: string; parent_pane: string; parent_id: string; profile?: WorkerProfile;
   session: string; prompt: string; model: string; thinking?: string; handoff: Omit<HandoffResult, "file">; started_at: string;
 };
 export type SeatReport = { id: string; role: SeatRole; status: string; summary: string; evidence?: string; at: string };
-type Profile = { model: string; thinking?: string | null };
+type SeatProfile = { model: string; thinking?: string | null };
 
 const LEAD_INSTRUCTION = "Downstream reader: the Lead who dispatches PLAN.md to fast Workers. Keep exact: user " +
   "constraints and decisions, file paths, commands, errors and facts the plan depends on. Summarize rationale " +
@@ -64,13 +64,27 @@ async function herdr(...args: string[]): Promise<any> {
   return parsed.result ?? parsed;
 }
 
-async function seatProfiles(): Promise<Record<string, Profile>> {
-  const bridge = readBridge();
-  if (!bridge) throw new Error("Shop bridge unconfigured; run core/plugin.py configure first");
-  const { stdout } = await run("python3", [join(bridge.core_root, "core/settings.py"), "seats"], {
-    timeout: 15_000, env: { ...process.env, SHOP_CONFIG_DIR: process.env.SHOP_CONFIG_DIR ?? bridge.config_dir },
-  });
-  return JSON.parse(stdout);
+type RunProfiles = { lead: SeatProfile; worker: SeatProfile; steady: SeatProfile };
+export type WorkerProfile = "fast" | "steady";
+
+function seatProfile(profile: Profile | undefined, seat: string): SeatProfile {
+  if (!profile?.model) throw new Error(`No ${seat} model configured; set it with /shop-config`);
+  return { model: profile.model, thinking: profile.thinking ?? null };
+}
+
+/** Architect resolves the effective config once per run; every seat of the run reads the same file. */
+async function resolveRunProfiles(pi: ExtensionAPI, ctx: ExtensionContext, runDir: string): Promise<RunProfiles> {
+  const profiles = await effectiveProfiles(pi, ctx);
+  const resolved = { lead: seatProfile(profiles.lead, "Lead"), worker: seatProfile(profiles.worker, "Fast Worker"),
+    steady: seatProfile(profiles["worker-2"], "Steady Worker") };
+  atomicJson(join(runDir, "profiles.json"), resolved);
+  return resolved;
+}
+
+function runProfiles(runDir: string): RunProfiles {
+  const profiles = readJson<RunProfiles>(join(runDir, "profiles.json"));
+  if (!profiles) throw new Error("Run profiles missing: " + join(runDir, "profiles.json"));
+  return profiles;
 }
 
 function handoffMode(): HandoffMode {
@@ -115,7 +129,7 @@ export function seatAgentName(runDir: string, id: string): string {
 /** Open a pane next to `anchor`, start Pi on the child session with the brief pinned in its system prompt. */
 async function spawnSeat(options: {
   runDir: string; id: string; role: SeatRole; anchor: string; direction: "right" | "down"; cwd: string;
-  parentId: string; profile: Profile; handoff: HandoffResult; brief: string;
+  parentId: string; profile: SeatProfile; workerProfile?: WorkerProfile; handoff: HandoffResult; brief: string;
 }): Promise<SeatRecord> {
   const { runDir, id, role, profile, handoff } = options;
   // System prompt survives the seat's own auto-compaction; session messages may not.
@@ -132,6 +146,7 @@ async function spawnSeat(options: {
   if (!pane) throw new Error("herdr pane split returned no pane");
   const seat: SeatRecord = {
     id, role, pane, parent_pane: parentPane, parent_id: options.parentId, session: handoff.file, prompt,
+    ...(options.workerProfile ? { profile: options.workerProfile } : {}),
     model: profile.model, ...(profile.thinking ? { thinking: profile.thinking } : {}),
     handoff: (({ file: _file, ...rest }) => rest)(handoff), started_at: new Date().toISOString(),
   };
@@ -175,9 +190,9 @@ function leadBrief(runDir: string): string {
     read("PLAN.md")].join("\n");
 }
 
-async function launchLead(ctx: ExtensionContext, dir: string, confirm: boolean): Promise<void> {
+async function launchLead(pi: ExtensionAPI, ctx: ExtensionContext, dir: string, confirm: boolean): Promise<void> {
   if (seatRecords(dir).some(seat => seat.role === "lead")) { ctx.ui.notify("This run already has a Lead", "warning"); return; }
-  const profiles = await seatProfiles();
+  const profiles = await resolveRunProfiles(pi, ctx, dir);
   const lead = profiles.lead;
   if (confirm && ctx.hasUI && !await ctx.ui.confirm("Launch Lead?", `${dir}\nLead: ${lead.model} (${lead.thinking ?? "default"})\n` +
     `Curator analyzer: ${profiles.worker.model}`)) return;
@@ -219,7 +234,7 @@ export function registerSeats(pi: ExtensionAPI): void {
       if (!dir) return;
       pendingGo = undefined;
       if (!hasSpec(dir)) { ctx.ui.notify(`SPEC.md/PLAN.md were not written in ${dir}; Lead not started`, "error"); return; }
-      try { await launchLead(ctx, dir, false); } catch (error) { ctx.ui.notify("Lead launch failed: " + String(error), "error"); }
+      try { await launchLead(pi, ctx, dir, false); } catch (error) { ctx.ui.notify("Lead launch failed: " + String(error), "error"); }
     });
 
     pi.registerCommand("shop-spec", { description: "Write SPEC.md + PLAN.md for a goal (ephemeral seats)", handler: async (args, ctx) => {
@@ -241,7 +256,7 @@ export function registerSeats(pi: ExtensionAPI): void {
         }
         const dir = path || latestRun(ctx);
         if (!dir || !hasSpec(dir)) { ctx.ui.notify("No run with SPEC.md and PLAN.md; use /shop-go <goal> or /shop-spec", "warning"); return; }
-        await launchLead(ctx, dir, true);
+        await launchLead(pi, ctx, dir, true);
       } });
     return;
   }
@@ -280,24 +295,29 @@ export function registerSeats(pi: ExtensionAPI): void {
   if (role !== "lead") return;
 
   pi.registerTool({ name: "shop_spawn_worker", label: "Shop spawn worker",
-    description: "Start one Worker in a new pane from a context curated for this task. Returns immediately; collect results with shop_wait_workers.",
+    description: "Start one Worker in a new pane with context handed over for this task. profile: \"fast\" (default) for routine work, " +
+      "\"steady\" only for complex or critical tasks. Returns immediately; collect results with shop_wait_workers.",
     parameters: Type.Object({
       id: Type.String({ pattern: "^[A-Za-z0-9_-]{1,32}$" }),
       task: Type.String({ minLength: 1, maxLength: 12000 }),
+      profile: Type.Optional(Type.Union([Type.Literal("fast"), Type.Literal("steady")])),
     }),
     execute: async (_id, args, signal, _update, ctx) => {
       if (existsSync(join(runDir, "seats", args.id + ".json")) || args.id === "lead") throw new Error("Seat id already used: " + args.id);
-      const profiles = await seatProfiles();
+      const profiles = runProfiles(runDir);
+      const workerProfile: WorkerProfile = args.profile ?? "fast";
+      const worker = workerProfile === "steady" ? profiles.steady : profiles.worker;
       const handoff = await handoffToChildSession(ctx, {
         focus: `Worker task ${args.id}: ${args.task.slice(0, 600)}`, instruction: WORKER_INSTRUCTION,
-        analyzerModel: profiles.worker.model, receiverModel: profiles.worker.model, sessionDir: join(runDir, "sessions"),
+        analyzerModel: profiles.worker.model, receiverModel: worker.model, sessionDir: join(runDir, "sessions"),
         name: `Shop Worker ${args.id}`, from: "Lead", mode: handoffMode(), budgetTokens: budgetOverride(), signal,
       });
       const seat = await spawnSeat({ runDir, id: args.id, role: "worker", anchor: process.env.HERDR_PANE_ID!,
-        direction: "down", cwd: ctx.cwd, parentId: seatId, profile: profiles.worker, handoff,
+        direction: "down", cwd: ctx.cwd, parentId: seatId, profile: worker, workerProfile, handoff,
         brief: `# Shop task ${args.id} (Worker)\nRun directory: ${runDir}\n\n${args.task}\n\nFinish with shop_report exactly once.\n\n` +
           "## Run SPEC (constraints and acceptance for context; do only your task above)\n" + readFileSync(join(runDir, "SPEC.md"), "utf8") });
-      return { content: [{ type: "text" as const, text: JSON.stringify({ id: args.id, pane: seat.pane, context: handoff.mode }) }],
+      return { content: [{ type: "text" as const, text: JSON.stringify({ id: args.id, pane: seat.pane, profile: workerProfile,
+        model: worker.model, context: handoff.mode }) }],
         details: seat };
     } });
 

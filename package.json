@@ -1,12 +1,11 @@
 {
   "name": "pi-herdr-shop",
   "version": "0.1.0-alpha.1",
-  "description": "Visible file-ticket workstation for Pi and Herdr",
+  "description": "Ephemeral Pi seats in Herdr: Architect writes SPEC/PLAN, a Lead and Workers run in their own panes with receiver-aware context handoff",
   "type": "module",
   "private": true,
   "keywords": [
-    "pi-package",
-    "herdr-plugin"
+    "pi-package"
   ],
   "pi": {
     "extensions": [
@@ -15,40 +14,26 @@
   },
   "files": [
     "extensions",
-    "transport",
     "core",
-    "bin",
     "roles",
     "locales/en.json",
     "locales/zh-CN.json",
-    "docs/en/ARCHITECTURE.md",
     "docs/en/INSTALLATION.md",
-    "docs/en/MIGRATION.md",
-    "docs/en/MODELS.md",
-    "docs/en/WORKBENCH.md",
-    "docs/en/WORKFLOW.md",
     "docs/en/SEATS.md",
+    "docs/en/MODELS.md",
     "docs/en/LANGUAGE.md",
     "docs/en/TESTING.md",
-    "docs/zh-CN/ARCHITECTURE.md",
     "docs/zh-CN/INSTALLATION.md",
-    "docs/zh-CN/MIGRATION.md",
-    "docs/zh-CN/MODELS.md",
-    "docs/zh-CN/WORKBENCH.md",
-    "docs/zh-CN/WORKFLOW.md",
     "docs/zh-CN/SEATS.md",
+    "docs/zh-CN/MODELS.md",
     "docs/zh-CN/LANGUAGE.md",
     "docs/zh-CN/TESTING.md",
-    "config",
-    "herdr-plugin.toml",
     "README.md",
     "README.zh-CN.md",
-    "THIRD_PARTY.md",
-    "LICENSE",
-    "LICENSE.pi-intercom"
+    "LICENSE"
   ],
   "scripts": {
-    "test": "SHOP_LOCATOR=/tmp/shop-unit-tests-no-bridge.json PYTHONPATH=core python3 -m unittest discover -s tests -p 'test_*.py' && bun test tests",
+    "test": "PYTHONPATH=core python3 -m unittest discover -s tests -p 'test_*.py' && bun test tests",
     "typecheck": "tsc --noEmit",
     "test:host": "python3 tests/host/run.py"
   },

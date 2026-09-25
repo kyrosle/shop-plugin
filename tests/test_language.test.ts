@@ -6,7 +6,6 @@ import { spawnSync } from "node:child_process";
 import ts from "typescript";
 import { catalogs, detectLanguage, readPreference, resolveLanguage, selectAction, t } from "../extensions/i18n.ts";
 import { registerLanguageCommand } from "../extensions/language-ui.ts";
-import { summarizeSnapshot } from "../extensions/state.ts";
 
 let old: NodeJS.ProcessEnv, root: string, path: string;
 beforeEach(() => {
@@ -14,10 +13,8 @@ beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), "shop-language-"));
   mkdirSync(join(root, "config"));
   path = join(root, "config/language.json");
-  process.env.SHOP_LOCATOR = join(root, "bridge.json");
+  process.env.SHOP_CONFIG_DIR = join(root, "config");
   process.env.LC_ALL = "en_US.UTF-8";
-  writeFileSync(process.env.SHOP_LOCATOR, JSON.stringify({ protocol: 1, core_root: resolve("."),
-    config_dir: join(root, "config"), state_dir: join(root, "state") }));
 });
 afterEach(() => {
   for (const key of Object.keys(process.env)) if (!(key in old)) delete process.env[key];
@@ -107,7 +104,7 @@ test("cancel, unsupported values, replaced sessions and conflicting saves never 
   f.ctx.ui.select = async () => { f.changeSession(); return "English"; };
   await f.command.handler("", f.ctx);
   expect(f.calls).toEqual([]);
-  expect(f.notices.at(-1)).toContain("Session or bridge changed");
+  expect(f.notices.at(-1)).toContain("Session changed");
   f.ctx.ui.select = async () => { preference("zh-CN"); return "English"; };
   await f.command.handler("", f.ctx);
   expect(readPreference().language).toBe("zh-CN");
@@ -127,23 +124,8 @@ test("selection uses captured labels and stable IDs even if language changes whi
   }
 });
 
-test("localized snapshot keeps original status, IDs, user text and error detail", () => {
-  const data = { schema: "shop.snapshot/v1", shop: { phase: "ready", run_id: "run-original" },
-    members: [], attention: [{ severity: "warn", code: "E_RAW", detail: "Keep 原文 {0}" }], unknowns: ["original unknown"], events: {} };
-  const original = JSON.stringify(data);
-  for (const language of ["en", "zh-CN"] as const) {
-    const result = summarizeSnapshot(original, 4000, language);
-    expect(result).toContain("ready"); expect(result).toContain("run-original");
-    expect(result).toContain("E_RAW"); expect(result).toContain("Keep 原文 {0}");
-    expect(result).toContain("original unknown");
-    expect(summarizeSnapshot(original, 24, language).length).toBeLessThanOrEqual(24);
-  }
-  expect(summarizeSnapshot(original, 4000, "zh-CN")).toContain("成员");
-  expect(JSON.stringify(data)).toBe(original);
-});
-
 test("all literal UI translation calls have shared catalogue entries", () => {
-  for (const name of ["index", "language-ui", "settings-ui", "reset-ui", "model-picker", "workbench-ui", "state", "transport"]) {
+  for (const name of ["index", "language-ui", "settings-ui", "model-picker", "seats"]) {
     const file = resolve(`extensions/${name}.ts`), source = readFileSync(file, "utf8");
     const tree = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true);
     function walk(node: ts.Node) {

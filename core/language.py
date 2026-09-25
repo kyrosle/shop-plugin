@@ -23,14 +23,7 @@ def detect_language(env=None):
 
 
 def preference_path():
-    locator = Path(os.environ.get('SHOP_LOCATOR', str(Path.home() / '.config/shop-workstation/bridge.json')))
-    config = Path.home() / '.config/shop-workstation'
-    if locator.exists():
-        bridge = json.loads(locator.read_text())
-        if (bridge.get('protocol') != 1 or any(not isinstance(bridge.get(k), str) or not Path(bridge[k]).is_absolute()
-                for k in ('core_root', 'state_dir', 'config_dir'))):
-            raise RuntimeError('Invalid Shop bridge or incompatible protocol')
-        config = Path(bridge['config_dir'])
+    config = Path(os.environ.get('SHOP_CONFIG_DIR') or str(Path.home() / '.config/shop-workstation')).expanduser()
     return config / 'language.json'
 
 

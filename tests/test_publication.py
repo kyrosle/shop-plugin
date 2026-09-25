@@ -13,13 +13,8 @@ class PublicationPrivacyTests(unittest.TestCase):
         rules = (ROOT / '.gitignore').read_text().splitlines()
         self.assertIn('/sync', rules)
 
-    def test_snapshot_generator_path_is_synthetic(self):
-        fixture = ROOT / 'tests/fixtures-snapshot/snapshot-sample.json'
-        snapshot = json.loads(fixture.read_text())
-        self.assertEqual(snapshot['generator']['core_root'], '/opt/shop-plugin')
-
     def test_only_public_user_guides_are_present(self):
-        guides = {'ARCHITECTURE.md', 'INSTALLATION.md', 'MIGRATION.md', 'MODELS.md', 'WORKBENCH.md', 'WORKFLOW.md', 'LANGUAGE.md', 'TESTING.md', 'SEATS.md'}
+        guides = {'INSTALLATION.md', 'MODELS.md', 'LANGUAGE.md', 'TESTING.md', 'SEATS.md'}
         public = {f'{lang}/{name}' for lang in ('en', 'zh-CN') for name in guides}
         self.assertEqual({str(path.relative_to(ROOT / 'docs')) for path in (ROOT / 'docs').rglob('*.md')}, public)
         package = json.loads((ROOT / 'package.json').read_text())
@@ -37,7 +32,7 @@ class PublicationPrivacyTests(unittest.TestCase):
             self.assertIn('**/' + name, npm_rules)
 
     def test_public_markdown_links_resolve(self):
-        paths = [ROOT / 'README.md', ROOT / 'README.zh-CN.md', ROOT / 'THIRD_PARTY.md', ROOT / 'transport/NOTICE.md',
+        paths = [ROOT / 'README.md', ROOT / 'README.zh-CN.md',
                  *sorted((ROOT / 'docs').rglob('*.md'))]
         for path in paths:
             for target in re.findall(r'\[[^\]]+\]\(([^)]+)\)', path.read_text()):
