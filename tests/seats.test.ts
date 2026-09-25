@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { excludeShopDir } from "../extensions/seats.ts";
+import { excludeShopDir, seatAgentName } from "../extensions/seats.ts";
 
 test("run records are excluded from git status once, via the repo-local exclude file", async () => {
   const repo = mkdtempSync(join(tmpdir(), "seats-exclude-"));
@@ -19,4 +19,14 @@ test("run records are excluded from git status once, via the repo-local exclude 
 
 test("outside a git repository the exclude step is a no-op", async () => {
   await excludeShopDir(mkdtempSync(join(tmpdir(), "seats-nogit-")));
+});
+
+test("seat agent names satisfy Herdr's rule even for long ids and stay unique", () => {
+  const rule = /^[a-z][a-z0-9_-]{0,31}$/;
+  const run = "/p/.shop/seats/20260925-120251-8A1475/";
+  const long = seatAgentName(run, "task2_add_unique_words_and_more_text");
+  expect(long).toMatch(rule);
+  expect(seatAgentName(run, "lead")).toMatch(rule);
+  expect(seatAgentName(run, "W.1 x")).toMatch(rule);
+  expect(seatAgentName(run, "task2_add_unique_words_a")).not.toBe(seatAgentName(run, "task2_add_unique_words_b"));
 });

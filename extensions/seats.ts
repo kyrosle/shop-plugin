@@ -2,8 +2,8 @@
 // seat starts from a curated child session in its own Herdr pane, works, reports
 // through a tool, and its pane closes. No resident members, no ticket JSON.
 import { execFile } from "node:child_process";
-import { randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { createHash, randomBytes } from "node:crypto";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -104,6 +104,14 @@ function newRunId(): string {
   return `${stamp}-${randomBytes(3).toString("hex")}`;
 }
 
+/** Herdr agent names: lowercase letter first, [a-z0-9_-], at most 32 characters; unique per run and seat. */
+export function seatAgentName(runDir: string, id: string): string {
+  const run = runDir.replace(/\/+$/, "").split("/").pop()!.slice(-6).toLowerCase().replace(/[^a-z0-9]/g, "0");
+  const slug = id.toLowerCase().replace(/[^a-z0-9_-]/g, "-").slice(0, 16);
+  const digest = createHash("sha256").update(id).digest("hex").slice(0, 4);
+  return `s${run}-${slug}-${digest}`;
+}
+
 /** Open a pane next to `anchor`, start Pi on the child session with the brief pinned in its system prompt. */
 async function spawnSeat(options: {
   runDir: string; id: string; role: SeatRole; anchor: string; direction: "right" | "down"; cwd: string;
@@ -127,12 +135,18 @@ async function spawnSeat(options: {
     model: profile.model, ...(profile.thinking ? { thinking: profile.thinking } : {}),
     handoff: (({ file: _file, ...rest }) => rest)(handoff), started_at: new Date().toISOString(),
   };
-  atomicJson(join(runDir, "seats", id + ".json"), seat);
-  const name = `seat-${runDir.split("/").pop()!.slice(-6)}-${id}`.toLowerCase().replace(/[^a-z0-9-]/g, "-");
-  await herdr("agent", "start", name, "--kind", "pi", "--pane", pane, "--timeout", "120000", "--",
-    "--session", handoff.file, "--model", profile.model, ...(profile.thinking ? ["--thinking", profile.thinking] : []),
-    "--append-system-prompt", prompt);
-  await herdr("agent", "prompt", pane, "Start now: follow the Shop brief in your system prompt.");
+  try {
+    await herdr("agent", "start", seatAgentName(runDir, id), "--kind", "pi", "--pane", pane, "--timeout", "120000", "--",
+      "--session", handoff.file, "--model", profile.model, ...(profile.thinking ? ["--thinking", profile.thinking] : []),
+      "--append-system-prompt", prompt);
+    // Record only a seat that really started, so a failed spawn can never be waited on.
+    atomicJson(join(runDir, "seats", id + ".json"), seat);
+    await herdr("agent", "prompt", pane, "Start now: follow the Shop brief in your system prompt.");
+  } catch (error) {
+    await herdr("pane", "close", pane).catch(() => {});
+    try { unlinkSync(join(runDir, "seats", id + ".json")); } catch { /* never recorded */ }
+    throw error;
+  }
   return seat;
 }
 
