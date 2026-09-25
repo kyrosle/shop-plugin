@@ -18,6 +18,7 @@ from pathlib import Path
 import shlex
 import shutil
 import signal
+import statistics
 import subprocess
 import sys
 import tempfile
@@ -30,11 +31,18 @@ FIXTURE_MODEL = 'shop-host-fixture/no-network'
 THINKING_LEVELS = ('off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max')
 LIVE_SCENARIOS = ('live-smoke', 'live-delegation')
 LIVE_TOKEN = 'SHOP_LIVE_OK'
+FIXTURE_TEXT = 'Host smoke fixture; no business repository.'
 # Deliberately forces the Worker path: a trivial task lets Lead do it alone.
 LIVE_TASK = ('Delegation test. The primary Lead must dispatch this as one analysis ticket to the Worker '
              'with shop_dispatch (not do it itself), then review and accept the Worker result. '
              'Task: read fixture.txt in this repository and report in one sentence what it says. '
              'Do not modify files.')
+
+
+def mentions_fixture(text):
+    """Models wrap Markdown lines; compare with whitespace and case normalized."""
+    normalize = lambda value: ' '.join(value.split()).lower()
+    return normalize(FIXTURE_TEXT) in normalize(text or '')
 
 
 class BudgetExceeded(RuntimeError):
@@ -283,7 +291,7 @@ sys.stdout.buffer.write(r.stdout); sys.stderr.buffer.write(r.stderr); sys.exit(r
         write_json(self.root / 'config/settings.json', {'version': 1, 'models': models})
         write_json(self.root / 'config/language.json', {'version': 1, 'language': 'en'})
         self.command(['git', 'init', '-q'])
-        (self.root / 'project/fixture.txt').write_text('Host smoke fixture; no business repository.\n')
+        (self.root / 'project/fixture.txt').write_text(FIXTURE_TEXT + '\n')
         self.command(['git', 'add', 'fixture.txt'])
         self.command(['git', '-c', 'user.name=HostFixture', '-c', 'user.email=fixture@example.invalid',
                       '-c', 'core.hooksPath=/dev/null', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'fixture'])
@@ -471,11 +479,30 @@ sys.stdout.buffer.write(r.stdout); sys.stderr.buffer.write(r.stderr); sys.exit(r
         for member in (state['lead'], state['workers'][0]):
             self.live_roundtrip(member['pane'])
 
+    def seat_usage(self, rows):
+        """Usage per role; the design-neutral baseline for comparing workflows."""
+        state = self.state() or {}
+        roles = {self.pane: 'architect'}
+        if state.get('lead'):
+            roles[state['lead']['pane']] = 'lead'
+        roles.update({member['pane']: 'worker' for member in state.get('workers', [])})
+        seats = {}
+        for row in rows:
+            seat = seats.setdefault(roles.get(row.get('pane'), 'other'),
+                                    {'calls': 0, 'input': 0, 'output': 0, 'cache_read': 0, 'cost_usd': 0.0})
+            usage = row.get('usage') or {}
+            seat['calls'] += 1
+            for key, source in (('input', 'input'), ('output', 'output'), ('cache_read', 'cacheRead')):
+                seat[key] += usage.get(source, 0) or 0
+            seat['cost_usd'] = round(seat['cost_usd'] + ((usage.get('cost') or {}).get('total', 0) or 0), 6)
+        return seats
+
     def live_delegation(self):
         """Real /shop loop: Architect -> Lead -> Worker -> accepted ticket + run summary."""
         # /shop refuses a busy Architect; poll (budget-checked) instead of a long CLI wait.
         self.wait(lambda: self.api('agent', 'get', self.pane)['agent']['agent_status'] in ('idle', 'done'),
                   'Architect did not settle before /shop', timeout=120)
+        self.delegation = {'ledger_start': len(self.usage_records()), 'started': time.monotonic()}
         self.slash('/shop ' + LIVE_TASK)
         runs = self.root / 'project/.shop/runs'
         def worker_accepted(run):
@@ -489,10 +516,32 @@ sys.stdout.buffer.write(r.stdout); sys.stderr.buffer.write(r.stderr); sys.exit(r
                 if summary.exists() and summary.stat().st_size and worker_accepted(run):
                     return run
         run = self.wait(delivered, 'No Worker ticket accepted with run SUMMARY.md', timeout=self.live['timeout'])
+        self.delegation['accepted_seconds'] = round(time.monotonic() - self.delegation['started'], 1)
+        summary = (run / 'SUMMARY.md').read_text()
         self.report['live_delivery'] = {
             'run': str(run), 'files': sorted(str(path.relative_to(run)) for path in run.rglob('*') if path.is_file()),
             'accepted_ticket': {key: worker_accepted(run).get(key) for key in ('ticket_id', 'owner', 'status', 'attempt')},
-            'summary_excerpt': (run / 'SUMMARY.md').read_text()[:2000]}
+            'summary_excerpt': summary[:2000]}
+        if not mentions_fixture(summary):
+            raise RuntimeError('SUMMARY.md does not quote the fixture content')
+
+    def live_architect_report(self):
+        """The loop ends when Architect reports the correct answer back to the user."""
+        start = self.delegation['ledger_start']
+        def reported():
+            rows = self.usage_records()[start:]
+            return next((row for row in rows if row.get('pane') == self.pane and row.get('stopReason') == 'stop'
+                         and mentions_fixture(row.get('text'))), None)
+        row = self.wait(reported, 'Architect did not report the fixture content back',
+                        timeout=max(60, self.live['timeout'] - self.delegation['accepted_seconds']))
+        rows = self.usage_records()[start:]
+        self.report['baseline'] = {
+            'task': LIVE_TASK,
+            'seconds_to_accepted': self.delegation['accepted_seconds'],
+            'seconds_to_report': round(time.monotonic() - self.delegation['started'], 1),
+            'seats': self.seat_usage(rows),
+            'architect_report_excerpt': row['text'][:1500],
+        }
 
     def reset_ui(self):
         before = self.registration.read_bytes()
@@ -639,6 +688,7 @@ sys.stdout.buffer.write(r.stdout); sys.stderr.buffer.write(r.stderr); sys.exit(r
                 self.step('live.member_roundtrip', self.live_members)
                 if scenario == 'live-delegation':
                     self.step('live.delegation_delivery', self.live_delegation)
+                    self.step('live.architect_report', self.live_architect_report)
             else:
                 self.step('pi.commands_configuration_reload', self.configuration_ui)
             if scenario in ('reset', 'all'):
@@ -680,6 +730,27 @@ sys.stdout.buffer.write(r.stdout); sys.stderr.buffer.write(r.stderr); sys.exit(r
         return 0 if self.report['result'] == 'passed' else 1
 
 
+def aggregate(reports):
+    """Pass rate plus min/median/max of the baseline metrics over passed runs."""
+    def spread(values):
+        values = [value for value in values if value is not None]
+        return values and {'min': min(values), 'median': statistics.median(values), 'max': max(values)}
+    passed = [report for report in reports if report['result'] == 'passed']
+    baselines = [report['baseline'] for report in passed if 'baseline' in report]
+    seats = sorted({seat for baseline in baselines for seat in baseline['seats']})
+    return {
+        'schema': 'shop.host-aggregate/v1', 'scenario': reports[0].get('scenario'), 'live': reports[0].get('live', {}).get('model'),
+        'runs': len(reports), 'passed': len(passed),
+        'failures': [{'root': report['root'], 'step': next((step['name'] for step in report['steps'] if step['status'] == 'failed'), None),
+                      'error': report.get('error')} for report in reports if report['result'] != 'passed'],
+        'cost_usd_per_run_all': spread([report.get('live', {}).get('usage', {}).get('cost_usd') for report in reports]),
+        'seconds_to_accepted': spread([baseline['seconds_to_accepted'] for baseline in baselines]),
+        'seconds_to_report': spread([baseline['seconds_to_report'] for baseline in baselines]),
+        'seats': {seat: {key: spread([baseline['seats'].get(seat, {}).get(key) for baseline in baselines])
+                         for key in ('calls', 'input', 'output', 'cost_usd')} for seat in seats},
+    }
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--run', action='store_true', help='Explicitly launch owned isolated Herdr/Pi processes')
@@ -690,6 +761,7 @@ def main():
     parser.add_argument('--live-budget-usd', type=float, default=0.30)
     parser.add_argument('--live-max-calls', type=int, default=80)
     parser.add_argument('--live-timeout', type=int, default=900, help='Seconds to wait for live delegation delivery')
+    parser.add_argument('--repeat', type=int, default=1, help='Independent isolated runs; live budget applies per run')
     args = parser.parse_args()
     binaries = {name: shutil.which(command) for name, command in
                 [('herdr','herdr'), ('pi','pi'), ('python','python3'), ('node','node')]}
@@ -697,6 +769,8 @@ def main():
         binaries['pi'] = shutil.which(args.pi_bin)
     if not all(binaries.values()):
         parser.error('herdr, pi, python3 and node must already be installed; no automatic installation')
+    if not 1 <= args.repeat <= 20:
+        parser.error('--repeat must be between 1 and 20')
     live = credential = None
     if (args.scenario in LIVE_SCENARIOS) != bool(args.live_model):
         parser.error('--live-model is required for live scenarios and refused for no-inference scenarios')
@@ -715,6 +789,7 @@ def main():
     if not args.run:
         print(json.dumps({'mode': 'plan_only', 'binaries': binaries, 'scenario': args.scenario,
                           'live': live and {key: live[key] for key in ('model', 'thinking', 'budget_usd', 'max_calls')},
+                          'repeat': args.repeat,
                           'launch': 'Use --run to opt in; no user server inherited' + (
                               '; live copies one API-key credential and spends up to the budget' if live
                               else '; no credentials'),
@@ -727,7 +802,20 @@ def main():
         raise KeyboardInterrupt('SIGTERM')
     previous = signal.signal(signal.SIGTERM, terminate)
     try:
-        return HostTest(binaries, live=live, credential=credential).run(args.scenario)
+        reports = []
+        for index in range(args.repeat):
+            if args.repeat > 1:
+                print(f'=== run {index + 1}/{args.repeat} ===', flush=True)
+            host = HostTest(binaries, live=live, credential=credential)
+            host.run(args.scenario)
+            reports.append(json.loads((host.root / 'report.json').read_text()))
+        if args.repeat > 1:
+            summary = aggregate(reports)
+            path = Path(tempfile.gettempdir()) / f'shop-host-aggregate-{time.strftime("%Y%m%d-%H%M%S")}.json'
+            write_json(path, summary)
+            print(json.dumps(summary, ensure_ascii=False, indent=2))
+            print('Aggregate:', path, flush=True)
+        return 0 if all(report['result'] == 'passed' for report in reports) else 1
     finally:
         signal.signal(signal.SIGTERM, previous)
 

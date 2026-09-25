@@ -74,7 +74,8 @@ python3 tests/host/run.py --run --scenario live-smoke \
 ```
 
 - `live-smoke`：Architect、Lead、Worker 各完成一次真实回合，并逐席位核对模型与 thinking 档位。
-- `live-delegation`：额外发送必须经由 Worker 执行的小型 analysis 任务 `/shop`，等待（`--live-timeout`，默认 900 秒）Worker 工单变为 `accepted` 且 run 生成 `SUMMARY.md`。
+- `live-delegation`：额外发送必须经由 Worker 执行的小型 analysis 任务 `/shop`，等待（`--live-timeout`，默认 900 秒）Worker 工单变为 `accepted`、`SUMMARY.md` 引用 fixture 原文，且 Architect 最终回复汇报该内容。报告中的 `baseline` 只统计委派任务本身（不含连通性检查）的各席位调用、token、费用与耗时。
+- `--repeat N`（最多 20）运行 N 次相互独立的隔离宿主（预算按单次计），并写出 `shop-host-aggregate-*.json`：通过率、失败步骤，以及基线指标的最小/中位/最大值。比较工作流改动时使用相同任务与参数。
 - 只从 `~/.pi/agent/auth.json` 复制所选 provider 的 **API key** 条目；拒绝 OAuth，避免测试中的刷新轮换掉用户自己的登录。无论成败，运行结束后删除副本；报告中不含凭据。
 - 每条 assistant 消息的用量写入 `live-usage.jsonl`。超过 `--live-budget-usd`（默认 0.30，最大 5）或 `--live-max-calls`（默认 80）即中止并停止本次服务。
 - 真实席位启用 Pi 内置工具，模型可以执行命令。席位加载测试根目录下的源码私有副本（`node_modules` 为软链接），Shop 路径不会指向你的工作区。隔离仍是配置/进程隔离，不是操作系统沙箱。

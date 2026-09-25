@@ -64,7 +64,7 @@ export default function fixture(pi: ExtensionAPI) {
   pi.on("message_end", (event) => {
     const message = event.message;
     if (message.role !== "assistant") return;
-    const text = message.content.filter(part => part.type === "text").map(part => part.text).join("").slice(0, 400);
+    const text = message.content.filter(part => part.type === "text").map(part => part.text).join("").slice(0, 4000);
     appendFileSync(join(root, "live-usage.jsonl"), JSON.stringify({
       pane: process.env.HERDR_PANE_ID, provider: message.provider, model: message.model,
       stopReason: message.stopReason, usage: message.usage, text, at: Date.now(),

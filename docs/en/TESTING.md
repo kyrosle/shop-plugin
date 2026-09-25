@@ -74,7 +74,8 @@ python3 tests/host/run.py --run --scenario live-smoke \
 ```
 
 - `live-smoke`: Architect, Lead and Worker each complete one real turn; models and thinking levels are checked per seat.
-- `live-delegation`: additionally sends `/shop` with a small analysis task that must go through the Worker, and waits (`--live-timeout`, default 900 s) until a Worker ticket is `accepted` and the run has `SUMMARY.md`.
+- `live-delegation`: additionally sends `/shop` with a small analysis task that must go through the Worker, and waits (`--live-timeout`, default 900 s) until a Worker ticket is `accepted`, `SUMMARY.md` quotes the fixture content, and Architect's final reply reports it. The report's `baseline` records per-seat calls, tokens, cost and time for the delegated task only (connectivity checks excluded).
+- `--repeat N` (max 20) runs N independent isolated hosts (budget applies per run) and writes `shop-host-aggregate-*.json` with pass rate, failure steps and min/median/max of the baseline metrics. Use the same task and flags to compare workflow changes.
 - Only the chosen provider's **API-key** entry is copied from `~/.pi/agent/auth.json`; OAuth credentials are refused because a test refresh could rotate the user's login. The copy is deleted after the run, success or failure; reports never contain it.
 - Every assistant message's usage is recorded in `live-usage.jsonl`. Exceeding `--live-budget-usd` (default 0.30, max 5) or `--live-max-calls` (default 80) aborts the run and stops the owned server.
 - Live seats run with Pi's built-in tools enabled, so models can execute commands. They load a private copy of the checkout under the test root (`node_modules` is symlinked), so Shop paths never point into your working tree. Isolation is still configuration/process isolation, not an OS sandbox.

@@ -315,6 +315,83 @@ class LiveProviderTests(unittest.TestCase):
         self.addCleanup(shutil.rmtree, plain.root)
         self.assertEqual(plain.package, host_runner.REPO)
 
+    def test_seat_usage_attributes_rows_by_registered_pane(self):
+        host = self.live_host()
+        host.pane = 'a'
+        host.state = Mock(return_value={'lead': {'pane': 'l'}, 'workers': [{'pane': 'w'}]})
+        row = lambda pane, cost: {'pane': pane, 'usage': {'input': 10, 'output': 2, 'cacheRead': 1, 'cost': {'total': cost}}}
+        seats = host.seat_usage([row('a', 0.1), row('l', 0.2), row('w', 0.3), row('w', 0.3), row('x', 1)])
+        self.assertEqual(seats['architect']['calls'], 1)
+        self.assertEqual(seats['worker'], {'calls': 2, 'input': 20, 'output': 4, 'cache_read': 2, 'cost_usd': 0.6})
+        self.assertEqual(seats['other']['calls'], 1)
+
+    def test_architect_report_requires_final_answer_with_fixture_text(self):
+        host = self.live_host()
+        host.pane = 'a'
+        host.state = Mock(return_value={})
+        host.delegation = {'ledger_start': 1, 'started': 0, 'accepted_seconds': 10}
+        ledger = host.root / 'live-usage.jsonl'
+        rows = [{'pane': 'a', 'stopReason': 'stop', 'text': host_runner.FIXTURE_TEXT},  # before /shop: ignored
+                {'pane': 'a', 'stopReason': 'toolUse', 'text': host_runner.FIXTURE_TEXT},
+                {'pane': 'l', 'stopReason': 'stop', 'text': host_runner.FIXTURE_TEXT}]
+        ledger.write_text(''.join(json.dumps(row) + '\n' for row in rows))
+        host.live['timeout'] = 0
+        with patch.object(host_runner.time, 'sleep'), self.assertRaises(TimeoutError):
+            host.wait = lambda predicate, label, timeout=None: predicate() or (_ for _ in ()).throw(TimeoutError(label))
+            host.live_architect_report()
+        with ledger.open('a') as stream:
+            stream.write(json.dumps({'pane': 'a', 'stopReason': 'stop', 'text': 'It says: ' + host_runner.FIXTURE_TEXT}) + '\n')
+        host.live_architect_report()
+        self.assertEqual(host.report['baseline']['seconds_to_accepted'], 10)
+        self.assertIn('architect', host.report['baseline']['seats'])
+
+    def test_fixture_match_tolerates_markdown_wrapping_but_not_other_text(self):
+        self.assertTrue(host_runner.mentions_fixture('says: "Host smoke fixture; no\n  business repository."'))
+        self.assertFalse(host_runner.mentions_fixture('Host smoke fixture; business repository.'))
+        self.assertFalse(host_runner.mentions_fixture(None))
+
+    def test_aggregate_reports_pass_rate_and_spreads(self):
+        def report(result, cost, accepted=None, step='live.delegation_delivery'):
+            value = {'root': '/tmp/r', 'result': result, 'scenario': 'live-delegation', 'live': {'model': 'm', 'usage': {'cost_usd': cost}},
+                     'steps': [{'name': step, 'status': 'passed' if result == 'passed' else 'failed'}], 'error': None if result == 'passed' else 'x'}
+            if accepted is not None:
+                value['baseline'] = {'seconds_to_accepted': accepted, 'seconds_to_report': accepted + 5,
+                                     'seats': {'lead': {'calls': accepted, 'input': 1, 'output': 1, 'cost_usd': cost}}}
+            return value
+        summary = host_runner.aggregate([report('passed', 0.02, 100), report('passed', 0.04, 300), report('failed', 0.01)])
+        self.assertEqual((summary['runs'], summary['passed']), (3, 2))
+        self.assertEqual(summary['failures'][0]['step'], 'live.delegation_delivery')
+        self.assertEqual(summary['seconds_to_accepted'], {'min': 100, 'median': 200, 'max': 300})
+        self.assertEqual(summary['cost_usd_per_run_all']['max'], 0.04)
+        self.assertEqual(summary['seats']['lead']['calls']['median'], 200)
+
+    def test_repeat_runs_independent_hosts_and_fails_if_any_run_fails(self):
+        results = iter(['passed', 'failed'])
+        created = []
+        def fake_host(*args, **kwargs):
+            host = Mock()
+            host.root = Path(self.enterContext(__import__('tempfile').TemporaryDirectory()))
+            result = next(results)
+            def run(_scenario):
+                (host.root / 'report.json').write_text(json.dumps({'root': str(host.root), 'result': result, 'scenario': 'live-smoke',
+                                                                    'steps': [{'name': 's', 'status': result}], 'live': {'usage': {'cost_usd': 0.01}}}))
+                return 0 if result == 'passed' else 1
+            host.run = run
+            created.append(host)
+            return host
+        home = self.auth_file({'cheap': {'type': 'api_key', 'key': SECRET}}).parent
+        (home / '.pi/agent').mkdir(parents=True)
+        (home / 'auth.json').rename(home / '.pi/agent/auth.json')
+        output = io.StringIO()
+        with patch.object(sys, 'argv', ['run.py', '--run', '--scenario', 'live-smoke', '--live-model', 'cheap/flash', '--repeat', '2']), \
+                patch.object(host_runner.shutil, 'which', return_value='/test/bin'), patch.object(sys, 'platform', 'darwin'), \
+                patch.object(host_runner.Path, 'home', return_value=home), patch.object(host_runner, 'HostTest', side_effect=fake_host), \
+                patch.object(host_runner, 'write_json'), contextlib.redirect_stdout(output):
+            self.assertEqual(host_runner.main(), 1)
+        self.assertEqual(len(created), 2)
+        self.assertNotIn(SECRET, output.getvalue())
+        self.assertIn('"passed": 1', output.getvalue())
+
     def test_live_scenario_skips_fixture_configuration_ui(self):
         host = self.live_host()
         for name in ('prepare', 'start', 'live_roundtrip', 'setup', 'live_members', 'configuration_ui', 'live_delegation'):
