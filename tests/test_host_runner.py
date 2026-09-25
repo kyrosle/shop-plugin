@@ -308,6 +308,20 @@ class LiveProviderTests(unittest.TestCase):
         self.assertNotIn(SECRET, report)
         self.assertTrue(json.loads(report)['credential_scrubbed'])
 
+    def test_live_seats_scenario_uses_ephemeral_flow_without_resident_setup(self):
+        host = self.live_host()
+        for name in ('prepare', 'start', 'live_roundtrip', 'setup', 'live_members', 'seats_spec', 'seats_go',
+                     'live_architect_report', 'seats_closed', 'live_delegation'):
+            setattr(host, name, Mock())
+        host.cleanup = Mock(return_value=True)
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(host.run('live-seats'), 0)
+        host.setup.assert_not_called()
+        host.live_delegation.assert_not_called()
+        self.assertEqual([step['name'] for step in host.steps],
+                         ['isolation.prepare', 'host.start_and_load', 'live.architect_roundtrip', 'seats.spec',
+                          'seats.go_worker_delivery', 'live.architect_report', 'seats.panes_closed'])
+
     def test_live_seats_load_a_private_snapshot_not_the_checkout(self):
         host = self.live_host()
         self.assertTrue(host.package.is_relative_to(host.root))

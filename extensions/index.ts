@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { instructions, readMode, snapshotFacts, summarizeSnapshot, type Mode } from "./state.js";
 import { readBridge, type Bridge } from "./bridge.js";
+import { registerSeats } from "./seats.js";
 import { ConfigPublisher } from "./configuration.js";
 import { editConfiguration } from "./settings-ui.js";
 import { startShopTransport, stopShopTransport, reconcileShopTransport, sessionIdFor } from "./transport.js";
@@ -16,6 +17,9 @@ import { workbenchUI, submitPrepared, workbenchClient } from "./workbench-ui.js"
 /** No generic interception, session replay, model calls, or automatic dispatch. */
 export default function shopMode(pi: ExtensionAPI) {
   if (process.env.HERDR_ENV !== "1") return;
+  registerSeats(pi);
+  // Ephemeral Lead/Worker seats get only their seat tools, not the resident Shop.
+  if (process.env.SHOP_SEAT_ROLE) return;
   registerLanguageCommand(pi);
   registerResetCommand(pi);
   const configPublisher = new ConfigPublisher(pi);

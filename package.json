@@ -51,17 +51,20 @@
     "test:host": "python3 tests/host/run.py"
   },
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": "^0.85.1",
     "@earendil-works/pi-ai": "^0.85.1",
+    "@earendil-works/pi-coding-agent": "^0.85.1",
     "@earendil-works/pi-tui": "^0.85.1",
     "typebox": "*"
   },
   "devDependencies": {
-    "@types/node": "^22.0.0",
     "@types/bun": "^1.2.0",
+    "@types/node": "^22.0.0",
     "typescript": "^5.8.0"
   },
   "engines": {
     "node": ">=22.19.0"
+  },
+  "dependencies": {
+    "pi-context-curator": "github:kyrosle/pi-context-curator#83b00b2de351bed1fcf234c28786e73e520e3c71"
   }
 }

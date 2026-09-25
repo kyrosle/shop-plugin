@@ -29,9 +29,13 @@ REPO = Path(__file__).resolve().parents[2]
 REQUIRED_COMMANDS = {'shop', 'shop-ui', 'shop-config', 'shop-language', 'shop-status', 'shop-reset'}
 FIXTURE_MODEL = 'shop-host-fixture/no-network'
 THINKING_LEVELS = ('off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max')
-LIVE_SCENARIOS = ('live-smoke', 'live-delegation')
+LIVE_SCENARIOS = ('live-smoke', 'live-delegation', 'live-seats')
 LIVE_TOKEN = 'SHOP_LIVE_OK'
 FIXTURE_TEXT = 'Host smoke fixture; no business repository.'
+# Same work as LIVE_TASK, phrased for the ephemeral-seat flow (/shop-spec, /shop-go).
+SEATS_TASK = ('Delegation test. A Worker must read fixture.txt in this repository and report in one sentence '
+              'what it says. The Lead must dispatch it with shop_spawn_worker and must not read the file itself. '
+              'Do not modify files.')
 # Deliberately forces the Worker path: a trivial task lets Lead do it alone.
 LIVE_TASK = ('Delegation test. The primary Lead must dispatch this as one analysis ticket to the Worker '
              'with shop_dispatch (not do it itself), then review and accept the Worker result. '
@@ -479,13 +483,14 @@ sys.stdout.buffer.write(r.stdout); sys.stderr.buffer.write(r.stderr); sys.exit(r
         for member in (state['lead'], state['workers'][0]):
             self.live_roundtrip(member['pane'])
 
-    def seat_usage(self, rows):
+    def seat_usage(self, rows, roles=None):
         """Usage per role; the design-neutral baseline for comparing workflows."""
-        state = self.state() or {}
-        roles = {self.pane: 'architect'}
-        if state.get('lead'):
-            roles[state['lead']['pane']] = 'lead'
-        roles.update({member['pane']: 'worker' for member in state.get('workers', [])})
+        if roles is None:
+            state = self.state() or {}
+            roles = {self.pane: 'architect'}
+            if state.get('lead'):
+                roles[state['lead']['pane']] = 'lead'
+            roles.update({member['pane']: 'worker' for member in state.get('workers', [])})
         seats = {}
         for row in rows:
             seat = seats.setdefault(roles.get(row.get('pane'), 'other'),
@@ -528,20 +533,86 @@ sys.stdout.buffer.write(r.stdout); sys.stderr.buffer.write(r.stderr); sys.exit(r
     def live_architect_report(self):
         """The loop ends when Architect reports the correct answer back to the user."""
         start = self.delegation['ledger_start']
+        # Only replies after the downstream report count as the final answer.
+        answer_from = self.delegation.get('report_from', start)
         def reported():
-            rows = self.usage_records()[start:]
+            rows = self.usage_records()[answer_from:]
             return next((row for row in rows if row.get('pane') == self.pane and row.get('stopReason') == 'stop'
                          and mentions_fixture(row.get('text'))), None)
         row = self.wait(reported, 'Architect did not report the fixture content back',
                         timeout=max(60, self.live['timeout'] - self.delegation['accepted_seconds']))
         rows = self.usage_records()[start:]
+        roles, seats = None, []
+        if self.delegation.get('run'):
+            seats = [json.loads(path.read_text()) for path in (self.delegation['run'] / 'seats').glob('*.json')]
+            roles = {self.pane: 'architect', **{seat['pane']: seat['role'] for seat in seats}}
+        usage = self.seat_usage(rows, roles)
+        analyzers = [seat['curation'].get('analyzer') or {} for seat in seats]
+        if analyzers:
+            # Curator completions bypass the session ledger; count them as their own seat.
+            usage['curator'] = {'calls': sum(a.get('calls', 0) for a in analyzers),
+                                'input': sum(a.get('input', 0) for a in analyzers),
+                                'output': sum(a.get('output', 0) for a in analyzers),
+                                'cache_read': sum(a.get('cacheRead', 0) for a in analyzers),
+                                'cost_usd': round(sum(a.get('cost', 0) for a in analyzers), 6)}
         self.report['baseline'] = {
-            'task': LIVE_TASK,
+            'task': self.delegation.get('task', LIVE_TASK),
             'seconds_to_accepted': self.delegation['accepted_seconds'],
             'seconds_to_report': round(time.monotonic() - self.delegation['started'], 1),
-            'seats': self.seat_usage(rows),
+            'seats': usage,
+            'cost_usd': round(sum(seat['cost_usd'] for seat in usage.values()), 6),
             'architect_report_excerpt': row['text'][:1500],
         }
+
+    def settle_architect(self, timeout=300):
+        self.wait(lambda: self.api('agent', 'get', self.pane)['agent']['agent_status'] in ('idle', 'done'),
+                  'Architect did not settle', timeout=timeout)
+
+    def seats_spec(self):
+        """/shop-spec: Architect writes SPEC.md and PLAN.md into a new seat run."""
+        self.settle_architect(120)
+        self.delegation = {'task': SEATS_TASK, 'ledger_start': len(self.usage_records()), 'started': time.monotonic()}
+        self.slash('/shop-spec ' + SEATS_TASK)
+        root = self.root / 'project/.shop/seats'
+        def written():
+            runs = sorted(root.glob('*/')) if root.exists() else []
+            return runs and all((runs[-1] / name).exists() and (runs[-1] / name).stat().st_size
+                                for name in ('SPEC.md', 'PLAN.md')) and runs[-1]
+        self.delegation['run'] = self.wait(written, 'SPEC.md/PLAN.md not written', timeout=300)
+        self.settle_architect()
+        self.delegation['spec_seconds'] = round(time.monotonic() - self.delegation['started'], 1)
+
+    def seats_go(self):
+        """/shop-go: confirm, then the Lead must dispatch a Worker and report back."""
+        run = self.delegation['run']
+        self.slash('/shop-go')
+        self.wait(lambda: 'Launch Lead?' in self.screen(), 'Lead launch confirmation not shown', timeout=60)
+        self.api('agent', 'send-keys', self.pane, 'enter')
+        report = lambda seat: json.loads((run / 'reports' / (seat + '.json')).read_text())
+        self.wait(lambda: (run / 'reports/lead.json').exists(), 'Lead did not report', timeout=self.live['timeout'])
+        self.delegation['report_from'] = len(self.usage_records())
+        self.delegation['accepted_seconds'] = round(time.monotonic() - self.delegation['started'], 1)
+        seats = [json.loads(path.read_text()) for path in (run / 'seats').glob('*.json')]
+        workers = [seat for seat in seats if seat['role'] == 'worker']
+        done = [seat['id'] for seat in workers if (run / 'reports' / (seat['id'] + '.json')).exists()
+                and report(seat['id'])['status'] == 'completed']
+        self.report['live_delivery'] = {
+            'run': str(run), 'lead_report': report('lead'), 'workers': [seat['id'] for seat in workers],
+            'completed_workers': done,
+            'curation': {seat['id']: seat['curation'] for seat in seats}}
+        if report('lead')['status'] != 'completed' or not done:
+            raise RuntimeError('Lead did not complete through a Worker: ' + json.dumps(self.report['live_delivery'])[:1500])
+        if not any(mentions_fixture(report(seat)['summary'] + (report(seat).get('evidence') or '')) for seat in done):
+            raise RuntimeError('No Worker report quotes the fixture content')
+
+    def seats_closed(self):
+        """S5: disposable seats close their own panes; only Architect remains."""
+        self.wait(lambda: [pane['pane_id'] for pane in self.api('pane', 'layout', '--pane', self.pane)['layout']['panes']]
+                  == [self.pane], 'Seat panes did not close', timeout=90)
+        run = self.delegation['run']
+        for path in (run / 'seats').glob('*.json'):
+            if not Path(json.loads(path.read_text())['session']).exists():
+                raise RuntimeError('Seat session not retained: ' + path.name)
 
     def reset_ui(self):
         before = self.registration.read_bytes()
@@ -684,8 +755,14 @@ sys.stdout.buffer.write(r.stdout); sys.stderr.buffer.write(r.stderr); sys.exit(r
             self.step('host.start_and_load', self.start)
             if scenario in LIVE_SCENARIOS:
                 self.step('live.architect_roundtrip', lambda: self.live_roundtrip(self.pane))
-                self.step('setup.live_members', self.setup)
-                self.step('live.member_roundtrip', self.live_members)
+                if scenario != 'live-seats':
+                    self.step('setup.live_members', self.setup)
+                    self.step('live.member_roundtrip', self.live_members)
+                if scenario == 'live-seats':
+                    self.step('seats.spec', self.seats_spec)
+                    self.step('seats.go_worker_delivery', self.seats_go)
+                    self.step('live.architect_report', self.live_architect_report)
+                    self.step('seats.panes_closed', self.seats_closed)
                 if scenario == 'live-delegation':
                     self.step('live.delegation_delivery', self.live_delegation)
                     self.step('live.architect_report', self.live_architect_report)
@@ -744,6 +821,8 @@ def aggregate(reports):
         'failures': [{'root': report['root'], 'step': next((step['name'] for step in report['steps'] if step['status'] == 'failed'), None),
                       'error': report.get('error')} for report in reports if report['result'] != 'passed'],
         'cost_usd_per_run_all': spread([report.get('live', {}).get('usage', {}).get('cost_usd') for report in reports]),
+        # Delegated task only (excludes connectivity checks), including curator analyzer calls.
+        'task_cost_usd': spread([baseline.get('cost_usd') for baseline in baselines]),
         'seconds_to_accepted': spread([baseline['seconds_to_accepted'] for baseline in baselines]),
         'seconds_to_report': spread([baseline['seconds_to_report'] for baseline in baselines]),
         'seats': {seat: {key: spread([baseline['seats'].get(seat, {}).get(key) for baseline in baselines])
