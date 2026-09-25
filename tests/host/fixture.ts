@@ -60,6 +60,16 @@ export default function fixture(pi: ExtensionAPI) {
   } });
   pi.registerCommand("shop-host-background-stop", { description: "Isolated fixture only", handler: stopJob });
   pi.on("session_shutdown", stopJob);
+  // Live lane budget/evidence ledger: usage and a short text excerpt only.
+  pi.on("message_end", (event) => {
+    const message = event.message;
+    if (message.role !== "assistant") return;
+    const text = message.content.filter(part => part.type === "text").map(part => part.text).join("").slice(0, 400);
+    appendFileSync(join(root, "live-usage.jsonl"), JSON.stringify({
+      pane: process.env.HERDR_PANE_ID, provider: message.provider, model: message.model,
+      stopReason: message.stopReason, usage: message.usage, text, at: Date.now(),
+    }) + "\n");
+  });
   pi.on("session_start", (_event, ctx) => {
     const pane = process.env.HERDR_PANE_ID;
     if (!pane || !/^[a-zA-Z0-9:._-]+$/.test(pane)) throw new Error("Missing host fixture pane identity");
@@ -68,6 +78,7 @@ export default function fixture(pi: ExtensionAPI) {
       pane, pid: process.pid, tab: process.env.HERDR_TAB_ID, socket: process.env.HERDR_SOCKET_PATH,
       session: ctx.sessionManager.getSessionId(), mode: ctx.mode, hasUI: ctx.hasUI,
       model: ctx.model && `${ctx.model.provider}/${ctx.model.id}`,
+      thinking: pi.getThinkingLevel(),
       commands: pi.getCommands().map(c => c.name), at: Date.now(),
     }), { mode: 0o600 });
     renameSync(observation + ".tmp", observation);

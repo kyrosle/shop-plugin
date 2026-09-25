@@ -61,6 +61,25 @@ npm run test:host -- --run --scenario lifecycle
 
 Bun 命令测试确认预检失败或会话变化时不发送模型请求。`transport_harness.test.ts` 将**实际 ShopTransportClient** 接入隔离的真实 broker，完成消息/回执交换，不运行 Pi、Herdr 或模型，可捕获原始 socket 测试发现不了的客户端漏发 hello。socket 派送/注入不等于业务接受。这些是离线检查，不是换会话、孤立登记清理或 Grok RPC 进程祖先链的真实宿主验收；后者须单独授权运行。
 
+## 真实 Provider 跑道（显式启用，会产生费用）
+
+上面的无推理场景从不使用凭据。`live-smoke` 与 `live-delegation` 是唯一付费路径，必须显式指定模型：
+
+```sh
+python3 tests/host/run.py --run --scenario live-smoke \
+  --pi-bin "$(which pi)" \
+  --live-model opencode-go/deepseek-v4.1-flash \
+  --live-thinking architect=max,lead=high,worker=low \
+  --live-budget-usd 0.30
+```
+
+- `live-smoke`：Architect、Lead、Worker 各完成一次真实回合，并逐席位核对模型与 thinking 档位。
+- `live-delegation`：额外发送必须经由 Worker 执行的小型 analysis 任务 `/shop`，等待（`--live-timeout`，默认 900 秒）Worker 工单变为 `accepted` 且 run 生成 `SUMMARY.md`。
+- 只从 `~/.pi/agent/auth.json` 复制所选 provider 的 **API key** 条目；拒绝 OAuth，避免测试中的刷新轮换掉用户自己的登录。无论成败，运行结束后删除副本；报告中不含凭据。
+- 每条 assistant 消息的用量写入 `live-usage.jsonl`。超过 `--live-budget-usd`（默认 0.30，最大 5）或 `--live-max-calls`（默认 80）即中止并停止本次服务。
+- 真实席位启用 Pi 内置工具，模型可以执行命令。席位加载测试根目录下的源码私有副本（`node_modules` 为软链接），Shop 路径不会指向你的工作区。隔离仍是配置/进程隔离，不是操作系统沙箱。
+- `npm run` 优先使用仓库内的 Pi；真实模型需要更新的 Pi 模型表时传 `--pi-bin`。
+
 ## 证据与清理
 
 每次打印 `Artifacts: <私有目录>`。`report.json` 包含各阶段结果、版本、覆盖边界、Provider 调用次数及清理结果。另保留 `commands.jsonl`、`server.log`、成员观测、私有原生插件日志、重置归档和收工计划。证据含本机路径和终端文字，分享前先检查。

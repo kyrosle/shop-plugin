@@ -4,6 +4,10 @@
 Default is a plan. --run creates a private headless server, real Pi PTYs and a
 throwaway Git project. A failed host assertion is a nonzero exit, never a skip.
 Artifacts remain outside the repository; only this run's server is stopped.
+
+Live scenarios (live-smoke, live-delegation) are the only paid path: they need
+an explicit --live-model, copy exactly one API-key credential (never OAuth) into
+the private root, enforce a cost/call budget and delete the credential afterwards.
 """
 import argparse
 import hashlib
@@ -22,6 +26,44 @@ import uuid
 
 REPO = Path(__file__).resolve().parents[2]
 REQUIRED_COMMANDS = {'shop', 'shop-ui', 'shop-config', 'shop-language', 'shop-status', 'shop-reset'}
+FIXTURE_MODEL = 'shop-host-fixture/no-network'
+THINKING_LEVELS = ('off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max')
+LIVE_SCENARIOS = ('live-smoke', 'live-delegation')
+LIVE_TOKEN = 'SHOP_LIVE_OK'
+# Deliberately forces the Worker path: a trivial task lets Lead do it alone.
+LIVE_TASK = ('Delegation test. The primary Lead must dispatch this as one analysis ticket to the Worker '
+             'with shop_dispatch (not do it itself), then review and accept the Worker result. '
+             'Task: read fixture.txt in this repository and report in one sentence what it says. '
+             'Do not modify files.')
+
+
+class BudgetExceeded(RuntimeError):
+    pass
+
+
+def parse_thinking(text):
+    """architect=max,lead=high,worker=low; omitted seats stay off."""
+    result = {'architect': 'off', 'lead': 'off', 'worker': 'off'}
+    for part in filter(None, (text or '').split(',')):
+        seat, _, level = part.strip().partition('=')
+        if seat not in result or level not in THINKING_LEVELS:
+            raise ValueError('Invalid thinking entry ' + repr(part) + '; use seat=level for architect/lead/worker')
+        result[seat] = level
+    return result
+
+
+def live_credential(provider, auth_path):
+    """Exactly one API-key entry. OAuth refresh tokens are never copied: a test
+    refresh could rotate and invalidate the user's own login."""
+    try:
+        entry = json.loads(Path(auth_path).read_text()).get(provider)
+    except (OSError, ValueError) as error:
+        raise RuntimeError('Cannot read Pi credentials: ' + type(error).__name__)
+    if not isinstance(entry, dict):
+        raise RuntimeError('No stored Pi credential for provider ' + provider)
+    if entry.get('type') != 'api_key' or not isinstance(entry.get('key'), str) or not entry['key']:
+        raise RuntimeError('Provider ' + provider + ' is not an API-key credential; OAuth is never copied into tests')
+    return {provider: {'type': 'api_key', 'key': entry['key']}}
 
 
 def write_json(path, value):
@@ -52,23 +94,31 @@ def isolated_env(root, paths):
 
 
 class HostTest:
-    def __init__(self, binaries, timeout=30):
+    def __init__(self, binaries, timeout=30, live=None, credential=None):
         # Short, canonical path also avoids Unix socket length limits on macOS.
         self.root = Path(tempfile.mkdtemp(prefix='shop-host-', dir='/tmp')).resolve()
         self.root.chmod(0o700)
         self.binaries, self.timeout = binaries, timeout
+        self.live, self.credential = live, credential
+        self.architect_model = live['model'] if live else FIXTURE_MODEL
+        # Code the host loads. Live seats have bash, so they get a private snapshot
+        # instead of absolute paths into the developer's checkout.
+        self.package = self.root / 'package' if live else REPO
         self.env = isolated_env(self.root, binaries.values())
         self.server = None
         self.log = None
         self.pane = self.tab = None
         self.steps = []
         self.report = {'schema': 'shop.host-test/v1', 'root': str(self.root), 'steps': self.steps,
-                       'provider_policy': 'local-fixture-only; no user credentials',
-                       'model': 'shop-host-fixture/no-network',
+                       'provider_policy': ('live: one API-key provider, budget-capped, credential deleted after run'
+                                           if live else 'local-fixture-only; no user credentials'),
+                       'model': self.architect_model,
                        'real_herdr': False, 'real_pi_tui': False, 'result': 'running',
                        'not_covered': ['real provider quality', 'full ticket delivery/acceptance',
                                        'worktree integration', 'visual screenshot comparison',
                                        'successful repeated-close acknowledgement']}
+        if live:
+            self.report['live'] = {key: live[key] for key in ('model', 'thinking', 'budget_usd', 'max_calls')}
         write_json(self.root / 'owned-test.json', {'nonce': uuid.uuid4().hex, 'runner_pid': os.getpid(),
                                                   'socket': self.env['HERDR_SOCKET_PATH']})
 
@@ -117,11 +167,36 @@ class HostTest:
         while time.monotonic() < deadline:
             if self.server and self.server.poll() is not None:
                 raise RuntimeError('Owned Herdr server exited')
+            self.check_budget()
             value = predicate()
             if value:
                 return value
             time.sleep(0.15)
         raise TimeoutError(label)
+
+    def usage_records(self):
+        path = self.root / 'live-usage.jsonl'
+        return [json.loads(line) for line in path.read_text().splitlines() if line.strip()] if path.exists() else []
+
+    def usage(self):
+        rows = self.usage_records()
+        total = lambda key: sum((row.get('usage') or {}).get(key, 0) or 0 for row in rows)
+        cost = sum(((row.get('usage') or {}).get('cost') or {}).get('total', 0) or 0 for row in rows)
+        return {'calls': len(rows), 'input': total('input'), 'output': total('output'),
+                'cache_read': total('cacheRead'), 'cost_usd': round(cost, 6)}
+
+    def check_budget(self):
+        if not self.live:
+            return
+        used = self.usage()
+        self.report['live']['usage'] = used
+        if used['cost_usd'] > self.live['budget_usd'] or used['calls'] > self.live['max_calls']:
+            raise BudgetExceeded('Live budget exceeded: ' + json.dumps(used))
+
+    def scrub_credentials(self):
+        auth = self.root / 'pi/auth.json'
+        auth.unlink(missing_ok=True)
+        self.report['credential_scrubbed'] = not auth.exists()
 
     def prepare(self):
         for name in ('home', 'herdr', 'pi', 'sessions', 'tmp', 'bin', 'config', 'state', 'project', 'observations'):
@@ -152,10 +227,21 @@ resume_agents_on_restore = false
                 raise RuntimeError(f'Unsupported Herdr version {version}; need >= 0.9.0')
             if binary == 'pi' and not re.fullmatch(r'\d+\.\d+\.\d+(?:[-+].+)?', version):
                 raise RuntimeError(f'Unexpected Pi version response: {version}')
-        write_json(self.root / 'pi/settings.json', {'defaultProvider': 'shop-host-fixture', 'defaultModel': 'no-network',
-                                                   'defaultThinkingLevel': 'off', 'quietStartup': False})
-        write_json(self.root / 'pi/auth.json', {})
-        fixture = REPO / 'tests/host/fixture.ts'
+        provider, model = self.architect_model.split('/', 1)
+        architect_thinking = self.live['thinking']['architect'] if self.live else 'off'
+        write_json(self.root / 'pi/settings.json', {'defaultProvider': provider, 'defaultModel': model,
+                                                   'defaultThinkingLevel': architect_thinking, 'quietStartup': False})
+        write_json(self.root / 'pi/auth.json', self.credential or {})
+        if self.live:
+            listed = self.command(['git', '-C', REPO, 'ls-files', '-co', '--exclude-standard', '-z']).stdout
+            for relative in filter(None, listed.split('\0')):
+                source = REPO / relative
+                if source.is_file() and not source.is_symlink():
+                    target = self.package / relative
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(source, target)
+            (self.package / 'node_modules').symlink_to(REPO / 'node_modules')
+        fixture = self.package / 'tests/host/fixture.ts'
         self.report['source'] = {
             'head': self.command(['git', '-C', REPO, 'rev-parse', 'HEAD']).stdout.strip(),
             'worktree': self.command(['git', '-c', 'core.fsmonitor=false', '-C', REPO,
@@ -163,10 +249,11 @@ resume_agents_on_restore = false
             'runner_sha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
             'fixture_sha256': hashlib.sha256(fixture.read_bytes()).hexdigest(),
         }
+        # Live seats need tools: Shop's own tools and bash for shop-run/herdr.
         args = [self.binaries['pi'], '--offline', '--no-extensions', '--no-skills', '--no-prompt-templates',
-                '--no-themes', '--no-context-files', '--no-tools', '--approve',
-                '-e', str(REPO / 'extensions/index.ts'), '-e', str(fixture),
-                '--provider', 'shop-host-fixture', '--model', 'no-network', '--thinking', 'off']
+                '--no-themes', '--no-context-files', *([] if self.live else ['--no-tools']), '--approve',
+                '-e', str(self.package / 'extensions/index.ts'), '-e', str(fixture),
+                '--provider', provider, '--model', model, '--thinking', architect_thinking]
         wrapper = self.root / 'bin/pi'
         wrapper.write_text('#!/bin/sh\nexec ' + shlex.join(args) + ' "$@"\n')
         wrapper.chmod(0o700)
@@ -185,16 +272,26 @@ if r.returncode == 0 and sys.argv[1:3] == ['pane','rename'] and flag.exists():
 sys.stdout.buffer.write(r.stdout); sys.stderr.buffer.write(r.stderr); sys.exit(r.returncode)
 ''')
         proxy.chmod(0o700)
-        write_json(self.root / 'bridge.json', {'protocol': 1, 'core_root': str(REPO),
+        write_json(self.root / 'bridge.json', {'protocol': 1, 'core_root': str(self.package),
                    'config_dir': str(self.root / 'config'), 'state_dir': str(self.root / 'state')})
-        write_json(self.root / 'config/settings.json', {'version': 1, 'models': {'defaults': {
-            'model': 'shop-host-fixture/no-network', 'thinking': 'off'}}})
+        if self.live:
+            thinking = self.live['thinking']
+            models = {'defaults': {'model': self.architect_model, 'thinking': thinking['lead']},
+                      'worker': {'model': self.architect_model, 'thinking': thinking['worker']}}
+        else:
+            models = {'defaults': {'model': FIXTURE_MODEL, 'thinking': 'off'}}
+        write_json(self.root / 'config/settings.json', {'version': 1, 'models': models})
         write_json(self.root / 'config/language.json', {'version': 1, 'language': 'en'})
         self.command(['git', 'init', '-q'])
         (self.root / 'project/fixture.txt').write_text('Host smoke fixture; no business repository.\n')
         self.command(['git', 'add', 'fixture.txt'])
         self.command(['git', '-c', 'user.name=HostFixture', '-c', 'user.email=fixture@example.invalid',
                       '-c', 'core.hooksPath=/dev/null', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'fixture'])
+        if self.live:
+            # Fail before any launch if this Pi build cannot resolve the live model.
+            listed = self.command([self.binaries['pi'], '--offline', '--no-extensions', '--list-models', model]).stdout
+            if not any(line.split()[:2] == [provider, model] for line in listed.splitlines()):
+                raise RuntimeError(f'Pi {self.report["versions"]["pi"]} cannot resolve {self.architect_model} with the copied credential')
 
     def start(self):
         before = self.command([self.binaries['herdr'], 'status', 'server'])
@@ -215,7 +312,7 @@ sys.stdout.buffer.write(r.stdout); sys.stderr.buffer.write(r.stderr); sys.exit(r
         if self.api('plugin', 'list', '--json')['plugins']:
             raise RuntimeError('Fresh server unexpectedly has plugins; no mutation allowed')
         self.report['real_herdr'] = True
-        self.command([self.binaries['herdr'], 'plugin', 'link', REPO])
+        self.command([self.binaries['herdr'], 'plugin', 'link', self.package])
         # Assert plugin registry stayed under private HOME/config, not user's registry.
         registry = self.root / 'home/.config/herdr/plugins.json'
         alternate = self.root / 'herdr/plugins.json'
@@ -229,8 +326,10 @@ sys.stdout.buffer.write(r.stdout); sys.stderr.buffer.write(r.stderr); sys.exit(r
         observed = json.loads((self.root / 'observations' / (self.pane + '.json')).read_text())
         if observed['mode'] != 'tui' or not observed['hasUI'] or not REQUIRED_COMMANDS <= set(observed['commands']):
             raise RuntimeError('Real Pi did not load expected TUI commands: ' + str(observed))
-        if observed['socket'] != self.env['HERDR_SOCKET_PATH'] or observed['model'] != 'shop-host-fixture/no-network':
-            raise RuntimeError('Pi escaped isolated socket or fixture model')
+        if observed['socket'] != self.env['HERDR_SOCKET_PATH'] or observed['model'] != self.architect_model:
+            raise RuntimeError('Pi escaped isolated socket or expected model')
+        if self.live and observed.get('thinking') != self.live['thinking']['architect']:
+            raise RuntimeError('Architect did not start with requested thinking: ' + str(observed.get('thinking')))
         self.report['real_pi_tui'] = True
         self.api('pane', 'layout', '--pane', self.pane)
 
@@ -341,12 +440,59 @@ sys.stdout.buffer.write(r.stdout); sys.stderr.buffer.write(r.stderr); sys.exit(r
             path = self.root / 'observations' / (member['pane'] + '.json')
             self.wait(path.exists, 'Member extension not loaded')
             observed = json.loads(path.read_text())
-            expected = 'shop-host-fixture/no-network-12' if member['pane'] == state['lead']['pane'] else 'shop-host-fixture/no-network'
-            if observed['model'] != expected:
-                raise RuntimeError('Member did not use its saved fixture profile: ' + str(observed))
+            role = ('architect' if member['pane'] == state['architect']['pane'] else
+                    'lead' if member['pane'] == state['lead']['pane'] else 'worker')
+            if self.live:
+                expected = (self.architect_model, self.live['thinking'][role])
+                actual = (observed['model'], observed.get('thinking'))
+            else:
+                expected = FIXTURE_MODEL + '-12' if role == 'lead' else FIXTURE_MODEL
+                actual = observed['model']
+            if actual != expected:
+                raise RuntimeError('Member did not use its saved profile: ' + str(observed))
             sessions.append(observed['session'])
         if len(set(sessions)) != 3:
             raise RuntimeError('Member sessions were reused')
+
+    def live_roundtrip(self, pane):
+        """One real model turn in a pane, proven by the fixture usage ledger."""
+        seen = len(self.usage_records())
+        self.api('agent', 'prompt', pane, f'Connectivity check. Reply with exactly {LIVE_TOKEN} and nothing else. Do not use tools.')
+        def replied():
+            rows = self.usage_records()[seen:]
+            return next((row for row in rows if row.get('pane') == pane and LIVE_TOKEN in (row.get('text') or '')), None)
+        row = self.wait(replied, 'No live reply from ' + pane, timeout=240)
+        if f"{row['provider']}/{row['model']}" != self.architect_model:
+            raise RuntimeError('Live reply came from unexpected model: ' + str(row))
+        return row
+
+    def live_members(self):
+        state = self.state()
+        for member in (state['lead'], state['workers'][0]):
+            self.live_roundtrip(member['pane'])
+
+    def live_delegation(self):
+        """Real /shop loop: Architect -> Lead -> Worker -> accepted ticket + run summary."""
+        # /shop refuses a busy Architect; poll (budget-checked) instead of a long CLI wait.
+        self.wait(lambda: self.api('agent', 'get', self.pane)['agent']['agent_status'] in ('idle', 'done'),
+                  'Architect did not settle before /shop', timeout=120)
+        self.slash('/shop ' + LIVE_TASK)
+        runs = self.root / 'project/.shop/runs'
+        def worker_accepted(run):
+            for path in (run / 'tickets').glob('*.ticket.json'):
+                ticket = json.loads(path.read_text())
+                if ticket.get('status') == 'accepted' and str(ticket.get('owner', '')).endswith('-worker'):
+                    return ticket
+        def delivered():
+            for run in sorted(runs.glob('*/')) if runs.exists() else []:
+                summary = run / 'SUMMARY.md'
+                if summary.exists() and summary.stat().st_size and worker_accepted(run):
+                    return run
+        run = self.wait(delivered, 'No Worker ticket accepted with run SUMMARY.md', timeout=self.live['timeout'])
+        self.report['live_delivery'] = {
+            'run': str(run), 'files': sorted(str(path.relative_to(run)) for path in run.rglob('*') if path.is_file()),
+            'accepted_ticket': {key: worker_accepted(run).get(key) for key in ('ticket_id', 'owner', 'status', 'attempt')},
+            'summary_excerpt': (run / 'SUMMARY.md').read_text()[:2000]}
 
     def reset_ui(self):
         before = self.registration.read_bytes()
@@ -487,7 +633,14 @@ sys.stdout.buffer.write(r.stdout); sys.stderr.buffer.write(r.stderr); sys.exit(r
         try:
             self.step('isolation.prepare', self.prepare)
             self.step('host.start_and_load', self.start)
-            self.step('pi.commands_configuration_reload', self.configuration_ui)
+            if scenario in LIVE_SCENARIOS:
+                self.step('live.architect_roundtrip', lambda: self.live_roundtrip(self.pane))
+                self.step('setup.live_members', self.setup)
+                self.step('live.member_roundtrip', self.live_members)
+                if scenario == 'live-delegation':
+                    self.step('live.delegation_delivery', self.live_delegation)
+            else:
+                self.step('pi.commands_configuration_reload', self.configuration_ui)
             if scenario in ('reset', 'all'):
                 self.step('setup.real_mutation_bad_reply', lambda: self.setup(fault=True))
                 self.step('pi.reset_cancel_confirm', self.reset_ui)
@@ -517,6 +670,11 @@ sys.stdout.buffer.write(r.stdout); sys.stderr.buffer.write(r.stderr); sys.exit(r
                     self.report['result'] = 'failed'
             except Exception as cleanup_error:
                 self.report.update(result='failed', cleanup='failed', cleanup_error=str(cleanup_error))
+            finally:
+                # After the server (and its Pi panes) stopped; always, even on failure.
+                if self.live:
+                    self.report['live']['usage'] = self.usage()
+                self.scrub_credentials()
             self.save()
             print('Artifacts:', self.root, flush=True)
         return 0 if self.report['result'] == 'passed' else 1
@@ -525,15 +683,41 @@ sys.stdout.buffer.write(r.stdout); sys.stderr.buffer.write(r.stderr); sys.exit(r
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--run', action='store_true', help='Explicitly launch owned isolated Herdr/Pi processes')
-    parser.add_argument('--scenario', choices=['startup', 'reset', 'lifecycle', 'all'], default='all')
+    parser.add_argument('--scenario', choices=['startup', 'reset', 'lifecycle', 'all', *LIVE_SCENARIOS], default='all')
+    parser.add_argument('--pi-bin', help='Pi executable (default: first pi on PATH; npm run prefers the repo copy)')
+    parser.add_argument('--live-model', help='provider/model for live scenarios; required there, refused elsewhere')
+    parser.add_argument('--live-thinking', default='', help='e.g. architect=max,lead=high,worker=low')
+    parser.add_argument('--live-budget-usd', type=float, default=0.30)
+    parser.add_argument('--live-max-calls', type=int, default=80)
+    parser.add_argument('--live-timeout', type=int, default=900, help='Seconds to wait for live delegation delivery')
     args = parser.parse_args()
     binaries = {name: shutil.which(command) for name, command in
                 [('herdr','herdr'), ('pi','pi'), ('python','python3'), ('node','node')]}
+    if args.pi_bin:
+        binaries['pi'] = shutil.which(args.pi_bin)
     if not all(binaries.values()):
         parser.error('herdr, pi, python3 and node must already be installed; no automatic installation')
+    live = credential = None
+    if (args.scenario in LIVE_SCENARIOS) != bool(args.live_model):
+        parser.error('--live-model is required for live scenarios and refused for no-inference scenarios')
+    if args.live_model:
+        if args.live_model.count('/') < 1 or not all(args.live_model.split('/', 1)):
+            parser.error('--live-model must be provider/model')
+        if not 0 < args.live_budget_usd <= 5 or args.live_max_calls < 1:
+            parser.error('--live-budget-usd must be in (0, 5] and --live-max-calls positive')
+        try:
+            thinking = parse_thinking(args.live_thinking)
+            credential = live_credential(args.live_model.split('/', 1)[0], Path.home() / '.pi/agent/auth.json')
+        except (ValueError, RuntimeError) as error:
+            parser.error(str(error))
+        live = {'model': args.live_model, 'thinking': thinking, 'budget_usd': args.live_budget_usd,
+                'max_calls': args.live_max_calls, 'timeout': args.live_timeout}
     if not args.run:
         print(json.dumps({'mode': 'plan_only', 'binaries': binaries, 'scenario': args.scenario,
-                          'launch': 'Use --run to opt in; no credentials or user server inherited',
+                          'live': live and {key: live[key] for key in ('model', 'thinking', 'budget_usd', 'max_calls')},
+                          'launch': 'Use --run to opt in; no user server inherited' + (
+                              '; live copies one API-key credential and spends up to the budget' if live
+                              else '; no credentials'),
                           'required_gate': 'Idle shutdown must pass; live background work must block; neither check is skipped'}, indent=2))
         return 0
     if sys.platform != 'darwin':
@@ -543,7 +727,7 @@ def main():
         raise KeyboardInterrupt('SIGTERM')
     previous = signal.signal(signal.SIGTERM, terminate)
     try:
-        return HostTest(binaries).run(args.scenario)
+        return HostTest(binaries, live=live, credential=credential).run(args.scenario)
     finally:
         signal.signal(signal.SIGTERM, previous)
 

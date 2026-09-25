@@ -208,5 +208,126 @@ class HostRunnerTests(unittest.TestCase):
         self.assertEqual(json.loads((host.root/'report.json').read_text())['result'], 'failed')
 
 
+LIVE = {'model': 'cheap/flash', 'thinking': {'architect': 'max', 'lead': 'high', 'worker': 'low'},
+        'budget_usd': 0.30, 'max_calls': 5, 'timeout': 60}
+SECRET = 'sk-test-never-in-reports'
+
+
+class LiveProviderTests(unittest.TestCase):
+    def live_host(self):
+        host = host_runner.HostTest({key: '/test-bin/' + key for key in ('herdr', 'pi', 'python', 'node')},
+                                    live=dict(LIVE), credential={'cheap': {'type': 'api_key', 'key': SECRET}})
+        self.addCleanup(shutil.rmtree, host.root)
+        return host
+
+    def auth_file(self, data):
+        path = Path(self.enterContext(__import__('tempfile').TemporaryDirectory())) / 'auth.json'
+        path.write_text(json.dumps(data))
+        return path
+
+    def main(self, *argv, auth=None):
+        output, errors = io.StringIO(), io.StringIO()
+        home = self.auth_file(auth or {'cheap': {'type': 'api_key', 'key': SECRET}}).parent
+        (home / '.pi/agent').mkdir(parents=True)
+        (home / 'auth.json').rename(home / '.pi/agent/auth.json')
+        with patch.object(sys, 'argv', ['run.py', *argv]), patch.object(host_runner.shutil, 'which', return_value='/test/bin'), \
+                patch.object(host_runner.Path, 'home', return_value=home), patch.object(host_runner, 'HostTest') as constructor, \
+                contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
+            try:
+                code = host_runner.main()
+            except SystemExit as exit:
+                code = exit.code
+        return code, output.getvalue(), errors.getvalue(), constructor
+
+    def test_thinking_parser_defaults_off_and_rejects_unknown(self):
+        self.assertEqual(host_runner.parse_thinking('architect=max,lead=high,worker=low'), LIVE['thinking'])
+        self.assertEqual(host_runner.parse_thinking(''), {'architect': 'off', 'lead': 'off', 'worker': 'off'})
+        for bad in ('architect=ultra', 'reviewer=low', 'lead'):
+            with self.assertRaises(ValueError):
+                host_runner.parse_thinking(bad)
+
+    def test_only_api_key_credentials_are_copied(self):
+        path = self.auth_file({'cheap': {'type': 'api_key', 'key': SECRET, 'extra': 'dropped'},
+                               'oauth': {'type': 'oauth', 'access': 'a', 'refresh': 'r'}, 'other': {'type': 'api_key', 'key': 'x'}})
+        self.assertEqual(host_runner.live_credential('cheap', path), {'cheap': {'type': 'api_key', 'key': SECRET}})
+        with self.assertRaisesRegex(RuntimeError, 'OAuth is never copied'):
+            host_runner.live_credential('oauth', path)
+        with self.assertRaisesRegex(RuntimeError, 'No stored'):
+            host_runner.live_credential('missing', path)
+
+    def test_live_model_is_required_for_live_and_refused_elsewhere(self):
+        code, _, errors, constructor = self.main('--run', '--scenario', 'live-smoke')
+        self.assertEqual(code, 2)
+        self.assertIn('--live-model is required', errors)
+        code, _, _, _ = self.main('--run', '--scenario', 'all', '--live-model', 'cheap/flash')
+        self.assertEqual(code, 2)
+        constructor.assert_not_called()
+
+    def test_oauth_provider_is_rejected_before_launch(self):
+        code, _, errors, constructor = self.main('--run', '--scenario', 'live-smoke', '--live-model', 'oauth/m',
+                                                 auth={'oauth': {'type': 'oauth', 'refresh': 'r'}})
+        self.assertEqual(code, 2)
+        self.assertIn('OAuth', errors)
+        constructor.assert_not_called()
+
+    def test_live_plan_shows_budget_but_never_the_key(self):
+        code, output, _, constructor = self.main('--scenario', 'live-smoke', '--live-model', 'cheap/flash',
+                                                 '--live-thinking', 'architect=max,lead=high,worker=low')
+        self.assertEqual(code, 0)
+        constructor.assert_not_called()
+        plan = json.loads(output)
+        self.assertEqual(plan['live']['thinking'], LIVE['thinking'])
+        self.assertEqual(plan['live']['budget_usd'], 0.30)
+        self.assertNotIn(SECRET, output)
+
+    def test_budget_counts_cost_and_calls(self):
+        host = self.live_host()
+        ledger = host.root / 'live-usage.jsonl'
+        row = {'pane': 'p', 'usage': {'input': 10, 'output': 5, 'cost': {'total': 0.1}}}
+        ledger.write_text(json.dumps(row) + '\n')
+        host.check_budget()
+        self.assertEqual(host.report['live']['usage']['cost_usd'], 0.1)
+        ledger.write_text((json.dumps(row) + '\n') * 4)
+        with self.assertRaisesRegex(host_runner.BudgetExceeded, 'budget exceeded'):
+            host.check_budget()
+        ledger.write_text(json.dumps({'usage': {'cost': {'total': 0}}}) + '\n' * 1 + (json.dumps({'usage': {}}) + '\n') * 5)
+        with self.assertRaisesRegex(host_runner.BudgetExceeded, 'calls'):
+            host.check_budget()
+
+    def test_live_run_scrubs_credential_and_keeps_it_out_of_report(self):
+        host = self.live_host()
+        (host.root / 'pi').mkdir()
+        (host.root / 'pi/auth.json').write_text(json.dumps(host.credential))
+        host.prepare = Mock()
+        host.start = Mock(side_effect=RuntimeError('boom'))
+        host.cleanup = Mock(return_value=True)
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(host.run('live-smoke'), 1)
+        self.assertFalse((host.root / 'pi/auth.json').exists())
+        report = (host.root / 'report.json').read_text()
+        self.assertNotIn(SECRET, report)
+        self.assertTrue(json.loads(report)['credential_scrubbed'])
+
+    def test_live_seats_load_a_private_snapshot_not_the_checkout(self):
+        host = self.live_host()
+        self.assertTrue(host.package.is_relative_to(host.root))
+        plain = host_runner.HostTest({key: '/test-bin/' + key for key in ('herdr', 'pi', 'python', 'node')})
+        self.addCleanup(shutil.rmtree, plain.root)
+        self.assertEqual(plain.package, host_runner.REPO)
+
+    def test_live_scenario_skips_fixture_configuration_ui(self):
+        host = self.live_host()
+        for name in ('prepare', 'start', 'live_roundtrip', 'setup', 'live_members', 'configuration_ui', 'live_delegation'):
+            setattr(host, name, Mock())
+        host.cleanup = Mock(return_value=True)
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(host.run('live-smoke'), 0)
+        host.configuration_ui.assert_not_called()
+        host.live_delegation.assert_not_called()
+        self.assertEqual([step['name'] for step in host.steps],
+                         ['isolation.prepare', 'host.start_and_load', 'live.architect_roundtrip',
+                          'setup.live_members', 'live.member_roundtrip'])
+
+
 if __name__ == '__main__':
     unittest.main()

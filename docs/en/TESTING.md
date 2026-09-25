@@ -61,6 +61,25 @@ Bound-run broker traffic, dispatch → acceptance → delivery, worktree integra
 
 Bun command tests assert no model request on failed preflight or session drift. `transport_harness.test.ts` connects the **production ShopTransportClient** to a real isolated broker and exchanges a message/receipt without Pi, Herdr or model calls. This catches missing client hello writes that raw socket tests cannot catch. Socket delivery/injection is not business acceptance. These are offline checks, not real-host acceptance of session replacement, orphan cleanup or Grok RPC process ancestry; those need separately authorized host runs.
 
+## Live provider lane (opt-in, paid)
+
+The no-inference scenarios above never use credentials. `live-smoke` and `live-delegation` are the only paid path and need an explicit model:
+
+```sh
+python3 tests/host/run.py --run --scenario live-smoke \
+  --pi-bin "$(which pi)" \
+  --live-model opencode-go/deepseek-v4.1-flash \
+  --live-thinking architect=max,lead=high,worker=low \
+  --live-budget-usd 0.30
+```
+
+- `live-smoke`: Architect, Lead and Worker each complete one real turn; models and thinking levels are checked per seat.
+- `live-delegation`: additionally sends `/shop` with a small analysis task that must go through the Worker, and waits (`--live-timeout`, default 900 s) until a Worker ticket is `accepted` and the run has `SUMMARY.md`.
+- Only the chosen provider's **API-key** entry is copied from `~/.pi/agent/auth.json`; OAuth credentials are refused because a test refresh could rotate the user's login. The copy is deleted after the run, success or failure; reports never contain it.
+- Every assistant message's usage is recorded in `live-usage.jsonl`. Exceeding `--live-budget-usd` (default 0.30, max 5) or `--live-max-calls` (default 80) aborts the run and stops the owned server.
+- Live seats run with Pi's built-in tools enabled, so models can execute commands. They load a private copy of the checkout under the test root (`node_modules` is symlinked), so Shop paths never point into your working tree. Isolation is still configuration/process isolation, not an OS sandbox.
+- `npm run` prefers the repository's Pi copy; pass `--pi-bin` when the live model needs a newer Pi registry.
+
 ## Evidence and cleanup
 
 Every run prints `Artifacts: <private directory>`. `report.json` contains per-stage outcomes, versions, coverage boundary, provider-call count and cleanup result. Additional evidence includes `commands.jsonl`, `server.log`, member observations, private native plugin logs, reset archives and shutdown plans. Artifacts contain machine paths and terminal text; inspect before sharing.
