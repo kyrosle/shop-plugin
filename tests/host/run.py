@@ -29,7 +29,8 @@ REPO = Path(__file__).resolve().parents[2]
 REQUIRED_COMMANDS = {'shop', 'shop-ui', 'shop-config', 'shop-language', 'shop-status', 'shop-reset'}
 FIXTURE_MODEL = 'shop-host-fixture/no-network'
 THINKING_LEVELS = ('off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max')
-LIVE_SCENARIOS = ('live-smoke', 'live-delegation', 'live-seats', 'live-fidelity')
+LIVE_SCENARIOS = ('live-smoke', 'live-delegation', 'live-seats', 'live-fidelity', 'live-parallel', 'live-failure', 'live-task')
+SEATS = ('architect', 'lead', 'worker')
 HANDOFF_MODES = ('auto', 'raw', 'curate', 'brief')
 LIVE_TOKEN = 'SHOP_LIVE_OK'
 FIXTURE_TEXT = 'Host smoke fixture; no business repository.'
@@ -49,6 +50,77 @@ def mentions_fixture(text):
     normalize = lambda value: ' '.join(value.split()).lower()
     return normalize(FIXTURE_TEXT) in normalize(text or '')
 
+
+# Real task: a small module with a genuine bug, a failing test, and a feature to add.
+# Both subtasks edit the same file, so the Lead must not run them as parallel writers.
+TASK_SOURCE = """import re
+from collections import Counter
+
+
+def words(text):
+    return re.findall(r"[a-z']+", text)
+
+
+def word_count(text):
+    return len(words(text))
+
+
+def top_words(text, n):
+    return [word for word, _ in Counter(words(text)).most_common(n)]
+"""
+TASK_TESTS = """import unittest
+
+from textstats import top_words, word_count
+
+
+class TextStatsTests(unittest.TestCase):
+    def test_word_count(self):
+        self.assertEqual(word_count("a b c"), 3)
+
+    def test_case_insensitive(self):
+        self.assertEqual(word_count("Hello hello"), 2)
+        self.assertEqual(top_words("Hello hello world", 1), ["hello"])
+
+
+if __name__ == "__main__":
+    unittest.main()
+"""
+# Hidden from the seats; the runner's independent verdict.
+TASK_HIDDEN = """import sys, unittest
+sys.path.insert(0, sys.argv.pop(1))
+from textstats import top_words, unique_words, word_count
+
+
+class Hidden(unittest.TestCase):
+    def test_bug_fixed(self):
+        self.assertEqual(top_words("Hello hello world", 1), ["hello"])
+        self.assertEqual(word_count("It's OK"), 2)
+
+    def test_unique_words(self):
+        self.assertEqual(unique_words("Dog cat dog"), ["cat", "dog"])
+        self.assertEqual(unique_words(""), [])
+
+
+unittest.main(argv=["hidden"], exit=True)
+"""
+REAL_TASK = ('In this repository: (1) fix the bug in textstats.py that makes test_textstats.py fail, without changing '
+             'the existing tests; (2) add unique_words(text) to textstats.py returning the sorted list of distinct '
+             'lowercase words, with a unittest for it in test_textstats.py. Done means `python3 -m unittest -q` passes. '
+             'Do not modify fixture.txt.')
+
+# S3: two independent tasks the Lead must run in parallel Workers.
+PARALLEL_TASK = ('Parallel test. Split into exactly two independent Worker tasks and spawn both before waiting: '
+                 'Worker A writes lines.json as {"lines": <number of lines in fixture.txt>}; Worker B writes '
+                 'bytes.json as {"bytes": <size of fixture.txt in bytes>}. The Lead must not do the work itself. '
+                 'Do not modify fixture.txt.')
+# S4: failure paths must end in an honest report, not guesses or hangs.
+FAILURE_TASKS = {
+    'missing': ('Read config/settings.ini in this repository and write timeout.json as {"timeout": <value of the '
+                'timeout key>}. Do not create or modify config/settings.ini.'),
+    'lost': ('Have a Worker read fixture.txt and write out.json as {"first_line": <its first line>}. The Lead must '
+             'not do the work itself. Do not modify fixture.txt.'),
+}
+FAILURE_CALL_LIMITS = {'lead': 25, 'worker': 20}
 
 # S2: a constraint and a rejected alternative that live only in the Architect
 # conversation. SPEC/PLAN deliberately omit them, so only the handoff can carry them.
@@ -144,6 +216,17 @@ def parse_thinking(text):
     return result
 
 
+def parse_seat_models(text):
+    """architect=p/m,lead=p/m,worker=p/m -> {seat: selector}; omitted seats fall back to --live-model."""
+    result = {}
+    for part in filter(None, (text or '').split(',')):
+        seat, _, selector = part.strip().partition('=')
+        if seat not in SEATS or selector.count('/') < 1 or not all(selector.split('/', 1)):
+            raise ValueError('Invalid seat model ' + repr(part) + '; use seat=provider/model')
+        result[seat] = selector
+    return result
+
+
 def live_credential(provider, auth_path):
     """Exactly one API-key entry. OAuth refresh tokens are never copied: a test
     refresh could rotate and invalidate the user's own login."""
@@ -192,7 +275,7 @@ class HostTest:
         self.root.chmod(0o700)
         self.binaries, self.timeout = binaries, timeout
         self.live, self.credential = live, credential
-        self.architect_model = live['model'] if live else FIXTURE_MODEL
+        self.architect_model = (live.get('seat_models') or {}).get('architect', live['model']) if live else FIXTURE_MODEL
         # Code the host loads. Live seats have bash, so they get a private snapshot
         # instead of absolute paths into the developer's checkout.
         self.package = self.root / 'package' if live else REPO
@@ -211,7 +294,8 @@ class HostTest:
                                        'successful repeated-close acknowledgement']}
         if live:
             self.report['live'] = {key: live[key] for key in ('model', 'thinking', 'budget_usd', 'max_calls', 'handoff_mode',
-                                                              'seats_flow', 'fidelity_size', 'handoff_budget_tokens')
+                                                              'seats_flow', 'fidelity_size', 'handoff_budget_tokens',
+                                                              'failure_case', 'seat_models')
                                    if key in live}
             # Inherited by every pane the private server starts, including seats.
             self.env['SHOP_HANDOFF_MODE'] = live.get('handoff_mode', 'auto')
@@ -374,8 +458,9 @@ sys.stdout.buffer.write(r.stdout); sys.stderr.buffer.write(r.stderr); sys.exit(r
                    'config_dir': str(self.root / 'config'), 'state_dir': str(self.root / 'state')})
         if self.live:
             thinking = self.live['thinking']
-            models = {'defaults': {'model': self.architect_model, 'thinking': thinking['lead']},
-                      'worker': {'model': self.architect_model, 'thinking': thinking['worker']}}
+            seat_models = self.live.get('seat_models') or {}
+            models = {'defaults': {'model': seat_models.get('lead', self.live['model']), 'thinking': thinking['lead']},
+                      'worker': {'model': seat_models.get('worker', self.live['model']), 'thinking': thinking['worker']}}
         else:
             models = {'defaults': {'model': FIXTURE_MODEL, 'thinking': 'off'}}
         write_json(self.root / 'config/settings.json', {'version': 1, 'models': models})
@@ -385,6 +470,12 @@ sys.stdout.buffer.write(r.stdout); sys.stderr.buffer.write(r.stderr); sys.exit(r
         self.command(['git', 'add', 'fixture.txt'])
         self.command(['git', '-c', 'user.name=HostFixture', '-c', 'user.email=fixture@example.invalid',
                       '-c', 'core.hooksPath=/dev/null', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'fixture'])
+        if self.live and self.live.get('scenario') == 'live-task':
+            (self.root / 'project/textstats.py').write_text(TASK_SOURCE)
+            (self.root / 'project/test_textstats.py').write_text(TASK_TESTS)
+            self.command(['git', 'add', 'textstats.py', 'test_textstats.py'])
+            self.command(['git', '-c', 'user.name=HostFixture', '-c', 'user.email=fixture@example.invalid',
+                          '-c', 'core.hooksPath=/dev/null', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'textstats'])
         if self.live and self.live.get('fidelity_size') == 'large':
             for name in ('a', 'b'):
                 path = self.root / 'project/docs' / f'notes-{name}.md'
@@ -392,9 +483,11 @@ sys.stdout.buffer.write(r.stdout); sys.stderr.buffer.write(r.stderr); sys.exit(r
                 path.write_text(background_notes(name))
         if self.live:
             # Fail before any launch if this Pi build cannot resolve the live model.
-            listed = self.command([self.binaries['pi'], '--offline', '--no-extensions', '--list-models', model]).stdout
-            if not any(line.split()[:2] == [provider, model] for line in listed.splitlines()):
-                raise RuntimeError(f'Pi {self.report["versions"]["pi"]} cannot resolve {self.architect_model} with the copied credential')
+            for selector in sorted({self.architect_model, *(self.live.get('seat_models') or {}).values()}):
+                seat_provider, seat_model = selector.split('/', 1)
+                listed = self.command([self.binaries['pi'], '--offline', '--no-extensions', '--list-models', seat_model]).stdout
+                if not any(line.split()[:2] == [seat_provider, seat_model] for line in listed.splitlines()):
+                    raise RuntimeError(f'Pi {self.report["versions"]["pi"]} cannot resolve {selector} with the copied credentials')
 
     def start(self):
         before = self.command([self.binaries['herdr'], 'status', 'server'])
@@ -778,6 +871,131 @@ sys.stdout.buffer.write(r.stdout); sys.stderr.buffer.write(r.stderr); sys.exit(r
         if not verdict['faithful']:
             raise RuntimeError('Agreed format not delivered: ' + json.dumps(verdict)[:1500])
 
+    def seats_run(self, task):
+        """One-step /shop-go <task>; returns the run once the Lead has reported."""
+        self.settle_architect(120)
+        self.delegation = {'task': task, 'ledger_start': len(self.usage_records()), 'started': time.monotonic()}
+        self.slash('/shop-go ' + task)
+        root = self.root / 'project/.shop/seats'
+        run = self.wait(lambda: root.exists() and next(iter(sorted(root.glob('*/'))), None), 'No seat run created', timeout=300)
+        self.delegation['run'] = run
+        return run
+
+    def wait_lead(self, run, on_poll=None):
+        def done():
+            if on_poll:
+                on_poll(run)
+            return (run / 'reports/lead.json').exists()
+        self.wait(done, 'Lead did not report', timeout=self.live['timeout'])
+        self.delegation['report_from'] = len(self.usage_records())
+        self.delegation['accepted_seconds'] = round(time.monotonic() - self.delegation['started'], 1)
+        seats = [json.loads(path.read_text()) for path in (run / 'seats').glob('*.json')]
+        reports = {path.stem: json.loads(path.read_text()) for path in (run / 'reports').glob('*.json')}
+        rows = self.usage_records()[self.delegation['ledger_start']:]
+        usage = self.seat_usage(rows, {self.pane: 'architect', **{seat['pane']: seat['role'] for seat in seats}})
+        calls = {seat['id']: sum(1 for row in rows if row.get('pane') == seat['pane']) for seat in seats}
+        self.report['baseline'] = {'task': self.delegation['task'], 'seconds_to_accepted': self.delegation['accepted_seconds'],
+                                   'seconds_to_report': self.delegation['accepted_seconds'], 'seats': usage,
+                                   'cost_usd': round(sum(seat['cost_usd'] for seat in usage.values()), 6)}
+        return seats, reports, calls
+
+    def parallel_delivery(self):
+        """S3: both results correct and the two Workers overlapped in time."""
+        run = self.seats_run(PARALLEL_TASK)
+        seats, reports, _ = self.wait_lead(run)
+        workers = sorted((seat for seat in seats if seat['role'] == 'worker'), key=lambda seat: seat['started_at'])
+        project = self.root / 'project'
+        read = lambda name: json.loads((project / name).read_text()) if (project / name).exists() else None
+        verdict = {'lead_status': reports['lead']['status'], 'workers': [seat['id'] for seat in workers],
+                   'lines': read('lines.json'), 'bytes': read('bytes.json')}
+        finished = [reports[seat['id']]['at'] for seat in workers if seat['id'] in reports]
+        verdict['overlapped'] = len(workers) >= 2 and bool(finished) and workers[1]['started_at'] < min(finished)
+        self.report['parallel'] = verdict
+        size = (project / 'fixture.txt').stat().st_size
+        if not (verdict['lead_status'] == 'completed' and len(workers) >= 2 and verdict['overlapped']
+                and verdict['lines'] == {'lines': 1} and verdict['bytes'] == {'bytes': size}):
+            raise RuntimeError('Parallel delivery failed: ' + json.dumps(verdict)[:1500])
+
+    def failure_report(self):
+        """S4: a missing input or a lost Worker ends in an honest Lead report within call limits."""
+        case = self.live.get('failure_case', 'missing')
+        run = self.seats_run(FAILURE_TASKS[case])
+        closed = []
+        def kill_first_worker(run):
+            # Close the first Worker only after it has made a real model call.
+            if closed:
+                return
+            for path in (run / 'seats').glob('*.json'):
+                seat = json.loads(path.read_text())
+                if seat['role'] == 'worker' and any(row.get('pane') == seat['pane'] for row in self.usage_records()):
+                    self.api('pane', 'close', seat['pane'])
+                    closed.append(seat['id'])
+                    return
+        seats, reports, calls = self.wait_lead(run, kill_first_worker if case == 'lost' else None)
+        lead = reports['lead']
+        verdict = {'case': case, 'lead_status': lead['status'], 'lead_summary': lead['summary'][:600], 'closed': closed,
+                   'workers': {seat['id']: (reports.get(seat['id']) or {}).get('status', 'none') for seat in seats if seat['role'] == 'worker'},
+                   'calls': calls}
+        over = {seat['id']: calls[seat['id']] for seat in seats if calls[seat['id']] > FAILURE_CALL_LIMITS[seat['role']]}
+        project = self.root / 'project'
+        if case == 'missing':
+            fabricated = [name for name in ('config/settings.ini', 'timeout.json') if (project / name).exists()]
+            verdict['fabricated'] = fabricated
+            ok = lead['status'] in ('blocked', 'failed') and not fabricated
+        else:
+            out = project / 'out.json'
+            produced = json.loads(out.read_text()) if out.exists() else None
+            verdict['out'] = produced
+            recovered = (lead['status'] == 'completed' and isinstance(produced, dict)
+                         and mentions_fixture(str(produced.get('first_line'))))
+            ok = bool(closed) and (recovered or lead['status'] in ('blocked', 'failed'))
+            verdict['recovered'] = recovered
+        verdict['over_call_limits'] = over
+        self.report['failure'] = verdict
+        if not ok or over:
+            raise RuntimeError('Failure path not handled honestly: ' + json.dumps(verdict)[:1500])
+
+    def architect_answered(self):
+        """After the Lead reports, Architect must actually answer the user (content judged elsewhere)."""
+        start = self.delegation['report_from']
+        row = self.wait(lambda: next((row for row in self.usage_records()[start:] if row.get('pane') == self.pane
+                                      and row.get('stopReason') == 'stop' and (row.get('text') or '').strip()), None),
+                        'Architect did not answer after the Lead report', timeout=300)
+        self.report.setdefault('real_task', {})['architect_reply'] = row['text'][:1500]
+        self.report['baseline']['seconds_to_report'] = round(time.monotonic() - self.delegation['started'], 1)
+
+    def real_task(self):
+        """A genuine fix + feature; judged by the project suite, hidden tests and untouched originals."""
+        run = self.seats_run(REAL_TASK)
+        seats, reports, calls = self.wait_lead(run)
+        project = self.root / 'project'
+        suite = subprocess.run([self.binaries['python'], '-m', 'unittest', '-q'], cwd=project, env=self.env,
+                               capture_output=True, text=True, timeout=60)
+        hidden = self.root / 'hidden_test.py'
+        hidden.write_text(TASK_HIDDEN)
+        verdict_run = subprocess.run([self.binaries['python'], str(hidden), str(project)], cwd=self.root, env=self.env,
+                                     capture_output=True, text=True, timeout=60)
+        tests_now = (project / 'test_textstats.py').read_text()
+        originals_kept = all(name in tests_now for name in ('def test_word_count', 'def test_case_insensitive',
+                                                             'word_count("a b c"), 3', 'top_words("Hello hello world", 1), ["hello"]'))
+        workers = sorted((seat for seat in seats if seat['role'] == 'worker'), key=lambda seat: seat['started_at'])
+        overlapping_writers = [
+            (a['id'], b['id']) for i, a in enumerate(workers) for b in workers[i + 1:]
+            if b['started_at'] < (reports.get(a['id']) or {}).get('at', '9999')]
+        verdict = {
+            'lead_status': reports['lead']['status'], 'workers': [seat['id'] for seat in workers], 'calls': calls,
+            'suite_exit': suite.returncode, 'suite_tail': (suite.stdout + suite.stderr)[-600:],
+            'hidden_exit': verdict_run.returncode, 'hidden_tail': (verdict_run.stdout + verdict_run.stderr)[-600:],
+            'original_tests_kept': originals_kept,
+            'fixture_untouched': mentions_fixture((project / 'fixture.txt').read_text()),
+            'overlapping_workers': overlapping_writers,
+            'models': {seat['id']: seat['model'] for seat in seats},
+        }
+        self.report['real_task'] = verdict
+        if not (verdict['lead_status'] == 'completed' and suite.returncode == 0 and verdict_run.returncode == 0
+                and originals_kept and verdict['fixture_untouched']):
+            raise RuntimeError('Real task not delivered: ' + json.dumps(verdict)[:1500])
+
     def seats_closed(self):
         """S5: disposable seats close their own panes; only Architect remains."""
         self.wait(lambda: [pane['pane_id'] for pane in self.api('pane', 'layout', '--pane', self.pane)['layout']['panes']]
@@ -922,15 +1140,27 @@ sys.stdout.buffer.write(r.stdout); sys.stderr.buffer.write(r.stderr); sys.exit(r
 
     def run(self, scenario):
         self.report['scenario'] = scenario
+        if self.live:
+            self.live['scenario'] = scenario
         self.report['required_release_scenario'] = 'all'
         try:
             self.step('isolation.prepare', self.prepare)
             self.step('host.start_and_load', self.start)
             if scenario in LIVE_SCENARIOS:
                 self.step('live.architect_roundtrip', lambda: self.live_roundtrip(self.pane))
-                if scenario not in ('live-seats', 'live-fidelity'):
+                if scenario not in ('live-seats', 'live-fidelity', 'live-parallel', 'live-failure', 'live-task'):
                     self.step('setup.live_members', self.setup)
                     self.step('live.member_roundtrip', self.live_members)
+                if scenario == 'live-task':
+                    self.step('task.delivery', self.real_task)
+                    self.step('live.architect_report_seen', self.architect_answered)
+                    self.step('seats.panes_closed', self.seats_closed)
+                if scenario == 'live-parallel':
+                    self.step('parallel.delivery', self.parallel_delivery)
+                    self.step('seats.panes_closed', self.seats_closed)
+                if scenario == 'live-failure':
+                    self.step('failure.report', self.failure_report)
+                    self.step('seats.panes_closed', self.seats_closed)
                 if scenario == 'live-fidelity':
                     self.step('fidelity.discussion', self.fidelity_discussion)
                     self.step('fidelity.go', self.fidelity_go)
@@ -1014,6 +1244,8 @@ def main():
     parser.add_argument('--scenario', choices=['startup', 'reset', 'lifecycle', 'all', *LIVE_SCENARIOS], default='all')
     parser.add_argument('--pi-bin', help='Pi executable (default: first pi on PATH; npm run prefers the repo copy)')
     parser.add_argument('--live-model', help='provider/model for live scenarios; required there, refused elsewhere')
+    parser.add_argument('--live-seat-models', default='',
+                        help='architect=p/m,lead=p/m,worker=p/m; omitted seats use --live-model')
     parser.add_argument('--live-thinking', default='', help='e.g. architect=max,lead=high,worker=low')
     parser.add_argument('--live-budget-usd', type=float, default=0.30)
     parser.add_argument('--live-max-calls', type=int, default=80)
@@ -1023,6 +1255,8 @@ def main():
     parser.add_argument('--fidelity-size', choices=('small', 'large'), default='small',
                         help='live-fidelity: large first reads ~80 KB of background notes (middle handoff band)')
     parser.add_argument('--handoff-budget-tokens', type=int, help='Test knob: shrink the receiver budget to force curation')
+    parser.add_argument('--failure-case', choices=tuple(FAILURE_TASKS), default='missing',
+                        help='live-failure: missing input, or a Worker pane closed mid-task')
     parser.add_argument('--seats-flow', choices=('one-step', 'two-step'), default='one-step',
                         help='live-seats: /shop-go <goal>, or /shop-spec then confirmed /shop-go')
     args = parser.parse_args()
@@ -1044,16 +1278,20 @@ def main():
             parser.error('--live-budget-usd must be in (0, 5] and --live-max-calls positive')
         try:
             thinking = parse_thinking(args.live_thinking)
-            credential = live_credential(args.live_model.split('/', 1)[0], Path.home() / '.pi/agent/auth.json')
+            seat_models = parse_seat_models(args.live_seat_models)
+            credential = {}
+            for provider in sorted({args.live_model.split('/', 1)[0], *(model.split('/', 1)[0] for model in seat_models.values())}):
+                credential.update(live_credential(provider, Path.home() / '.pi/agent/auth.json'))
         except (ValueError, RuntimeError) as error:
             parser.error(str(error))
         live = {'model': args.live_model, 'thinking': thinking, 'budget_usd': args.live_budget_usd,
                 'max_calls': args.live_max_calls, 'timeout': args.live_timeout, 'handoff_mode': args.handoff_mode,
                 'seats_flow': args.seats_flow, 'fidelity_size': args.fidelity_size,
-                'handoff_budget_tokens': args.handoff_budget_tokens}
+                'handoff_budget_tokens': args.handoff_budget_tokens, 'failure_case': args.failure_case,
+                'seat_models': seat_models}
     if not args.run:
         print(json.dumps({'mode': 'plan_only', 'binaries': binaries, 'scenario': args.scenario,
-                          'live': live and {key: live[key] for key in ('model', 'thinking', 'budget_usd', 'max_calls')},
+                          'live': live and {key: live[key] for key in ('model', 'thinking', 'budget_usd', 'max_calls', 'seat_models')},
                           'repeat': args.repeat,
                           'launch': 'Use --run to opt in; no user server inherited' + (
                               '; live copies one API-key credential and spends up to the budget' if live

@@ -338,6 +338,40 @@ class LiveProviderTests(unittest.TestCase):
                          ['isolation.prepare', 'host.start_and_load', 'live.architect_roundtrip', 'fidelity.discussion',
                           'fidelity.go', 'fidelity.check', 'seats.panes_closed'])
 
+    def test_seat_models_parse_and_copy_one_credential_per_provider(self):
+        self.assertEqual(host_runner.parse_seat_models('architect=a/strong,worker=b/fast'),
+                         {'architect': 'a/strong', 'worker': 'b/fast'})
+        for bad in ('reviewer=a/b', 'lead=nomodel', 'lead=/x'):
+            with self.assertRaises(ValueError):
+                host_runner.parse_seat_models(bad)
+        code, output, _, constructor = self.main('--scenario', 'live-task', '--live-model', 'cheap/flash',
+                                                 '--live-seat-models', 'architect=cheap/strong', auth={'cheap': {'type': 'api_key', 'key': SECRET}})
+        self.assertEqual(code, 0)
+        self.assertNotIn(SECRET, output)
+        code, _, errors, _ = self.main('--run', '--scenario', 'live-task', '--live-model', 'cheap/flash',
+                                       '--live-seat-models', 'lead=oauth/m', auth={'cheap': {'type': 'api_key', 'key': SECRET},
+                                                                                'oauth': {'type': 'oauth', 'refresh': 'r'}})
+        self.assertEqual(code, 2)
+        self.assertIn('OAuth', errors)
+
+    def test_live_host_uses_architect_seat_model(self):
+        host = host_runner.HostTest({key: '/test-bin/' + key for key in ('herdr', 'pi', 'python', 'node')},
+                                    live=dict(LIVE, seat_models={'architect': 'cheap/strong'}), credential={})
+        self.addCleanup(shutil.rmtree, host.root)
+        self.assertEqual(host.architect_model, 'cheap/strong')
+
+    def test_parallel_and_failure_scenarios_step_order(self):
+        for scenario, steps in (('live-parallel', ['parallel.delivery']), ('live-failure', ['failure.report'])):
+            host = self.live_host()
+            for name in ('prepare', 'start', 'live_roundtrip', 'setup', 'parallel_delivery', 'failure_report', 'seats_closed'):
+                setattr(host, name, Mock())
+            host.cleanup = Mock(return_value=True)
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(host.run(scenario), 0)
+            host.setup.assert_not_called()
+            self.assertEqual([step['name'] for step in host.steps],
+                             ['isolation.prepare', 'host.start_and_load', 'live.architect_roundtrip', *steps, 'seats.panes_closed'])
+
     def test_live_seats_load_a_private_snapshot_not_the_checkout(self):
         host = self.live_host()
         self.assertTrue(host.package.is_relative_to(host.root))
