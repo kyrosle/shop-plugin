@@ -44,7 +44,7 @@ Seat tools: the Lead has `shop_spawn_worker`, `shop_wait_workers` (waits without
 
 ## Files
 
-Everything for a run lives in `.shop/seats/<run>/` in the project:
+Everything for a run lives in `.shop/seats/<run>/` in the project. Creating a run adds `/.shop/` to the repository-local `.git/info/exclude` (never committed) if it is not listed, so run records do not show up in `git status`:
 
 | Path | Content |
 | --- | --- |

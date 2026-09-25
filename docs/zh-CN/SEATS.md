@@ -44,7 +44,7 @@ Lead 的 shop_report → 作为消息送到 Architect → Architect 对照 SPEC 
 
 ## 文件
 
-一次 run 的全部内容都在项目的 `.shop/seats/<run>/` 下：
+一次 run 的全部内容都在项目的 `.shop/seats/<run>/` 下。创建 run 时，如果仓库本地的 `.git/info/exclude`（不会被提交）里还没有 `/.shop/`，会自动加上，避免 run 记录出现在 `git status` 里：
 
 | 路径 | 内容 |
 | --- | --- |
