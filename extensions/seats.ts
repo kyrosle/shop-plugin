@@ -85,6 +85,20 @@ function budgetOverride(): number | undefined {
   return Number.isInteger(value) && value > 0 ? value : undefined;
 }
 
+/** Keep run records out of `git status` via the repo-local exclude file (never committed); best effort. */
+export async function excludeShopDir(cwd: string): Promise<void> {
+  try {
+    const { stdout } = await run("git", ["rev-parse", "--git-path", "info/exclude"], { cwd, timeout: 10_000 });
+    const path = resolve(cwd, stdout.trim());
+    const current = existsSync(path) ? readFileSync(path, "utf8") : "";
+    if (current.split("\n").some(line => [".shop", ".shop/", "/.shop", "/.shop/"].includes(line.trim()))) return;
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, current + (current && !current.endsWith("\n") ? "\n" : "") + "/.shop/\n");
+  } catch {
+    /* not a git repository, or git unavailable */
+  }
+}
+
 function newRunId(): string {
   const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\..*/, "").replace("T", "-");
   return `${stamp}-${randomBytes(3).toString("hex")}`;
@@ -179,9 +193,10 @@ export function registerSeats(pi: ExtensionAPI): void {
   if (!role) {
     // One-step /shop-go <goal>: launch the Lead when the SPEC-writing turn ends.
     let pendingGo: string | undefined;
-    const newRun = (ctx: ExtensionContext) => {
+    const newRun = async (ctx: ExtensionContext) => {
       const dir = join(ctx.cwd, ".shop", "seats", newRunId());
       mkdirSync(dir, { recursive: true, mode: 0o700 });
+      await excludeShopDir(ctx.cwd);
       pi.appendEntry(RUN_ENTRY, { dir });
       return dir;
     };
@@ -196,7 +211,7 @@ export function registerSeats(pi: ExtensionAPI): void {
     pi.registerCommand("shop-spec", { description: "Write SPEC.md + PLAN.md for a goal (ephemeral seats)", handler: async (args, ctx) => {
       if (!args.trim()) { ctx.ui.notify("Usage: /shop-spec <goal>", "info"); return; }
       if (!ctx.isIdle()) { ctx.ui.notify("Current turn unfinished; nothing started", "warning"); return; }
-      pi.sendUserMessage(specPrompt(newRun(ctx), args.trim(), false));
+      pi.sendUserMessage(specPrompt(await newRun(ctx), args.trim(), false));
     } });
 
     pi.registerCommand("shop-go", {
@@ -206,7 +221,7 @@ export function registerSeats(pi: ExtensionAPI): void {
         const arg = args.trim();
         const path = arg && resolve(ctx.cwd, arg);
         if (arg && !(existsSync(path) && statSync(path).isDirectory())) {
-          pendingGo = newRun(ctx);
+          pendingGo = await newRun(ctx);
           pi.sendUserMessage(specPrompt(pendingGo, arg, true));
           return;
         }
@@ -236,7 +251,8 @@ export function registerSeats(pi: ExtensionAPI): void {
       if (role === "lead") {
         await herdr("agent", "prompt", process.env.SHOP_SEAT_PARENT_PANE!, [
           `[Shop] Lead report for ${runDir}: ${args.status}.`, args.summary.slice(0, 3000), "",
-          `Verify against ${runDir}/SPEC.md acceptance criteria (reports are in ${runDir}/reports) and give the user the final result.`,
+          "First answer the user's original request directly with the actual result (what was found, produced or changed). " +
+            `Then briefly note verification against ${runDir}/SPEC.md acceptance criteria (reports are in ${runDir}/reports).`,
         ].join("\n"));
       }
       return { content: [{ type: "text" as const, text: "Reported. Stop now; this seat will close." }], details: report };
