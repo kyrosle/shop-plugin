@@ -6,7 +6,7 @@ Offline Python/Bun tests remain necessary. They do not prove that Herdr's actual
 
 ## Run from a source checkout
 
-Prerequisites: macOS, Herdr **0.9.0**, Pi, Node and Python 3 already installed on PATH; repository dependencies installed with `npm ci --ignore-scripts`. The runner never installs or upgrades host binaries. Herdr's version is fixed to the adapter contract; the actual Pi version is recorded and exercised rather than assumed compatible.
+Prerequisites: macOS, Herdr **>= 0.9.0** (tested on 0.9.1), Pi, Node and Python 3 already installed on PATH; repository dependencies installed with `npm ci --ignore-scripts`. The runner never installs or upgrades host binaries. Herdr compatibility is decided by the adapter's protocol/schema probe; the actual Pi version is recorded and exercised rather than assumed compatible.
 
 ```sh
 npm run test:host                       # plan/preflight only; starts nothing

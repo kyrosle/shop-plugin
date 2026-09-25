@@ -18,7 +18,7 @@ For this installation method, choose the **Herdr-managed checkout** as authorita
 
 ## 1. Check prerequisites and preserve existing work
 
-- Current adapter targets Herdr **0.9.0**, protocol **22**, schema **1**. CLI and running server must agree. The manifest's minimum version does not mean every later Herdr release is supported.
+- Current adapter requires Herdr **>= 0.9.0** (tested on **0.9.1**), protocol **22**, schema **1**. CLI and running server must agree. A newer release is accepted only if its protocol/schema match and it still declares every response type and payload key the adapter uses; otherwise Shop refuses to start.
 - Pi **0.85.1-compatible API**, Node **>=22.19.0**, Python **>=3.9**, Git. Bun is for development tests, not normal installation.
 - Pi provider authentication and models must already be available. Keep the general `@ogulcancelik/pi-herdr` tools available; Shop is not a replacement for them.
 - Install on the host that runs the Herdr panes. Remote shortcut forwarding needs separate client configuration.

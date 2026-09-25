@@ -56,7 +56,7 @@ Expected delivery includes findings or a change summary, applicable check comman
 
 ### 1. Prerequisites
 
-- Herdr **0.9.0**; the adapter pins protocol **22 / schema 1**. CLI and running server must be compatible.
+- Herdr **>= 0.9.0** (tested on **0.9.1**); the adapter requires protocol **22 / schema 1** and checks every response type it uses at startup. CLI and running server must be compatible.
 - Pi **0.85.1-compatible API**, Node **>=22.19.0**, Python **>=3.9**, Git. Bun is needed only for development tests.
 - Configure Pi providers, credentials and available models first. Shop ships no credentials or personal model selections.
 - Keep `@ogulcancelik/pi-herdr` available for general agent inspection, waiting and control.

@@ -6,7 +6,7 @@ Python/Bun 离线测试仍然必要，但不能证明 Herdr 的真实返回结�
 
 ## 从源码 checkout 运行
 
-前提：macOS；PATH 中已安装 Herdr **0.9.0**、Pi、Node、Python 3；仓库已执行 `npm ci --ignore-scripts`。跑道不自动安装或升级宿主。Herdr 版本固定到适配器契约；Pi 实际版本写入报告，由真实测试检查兼容性。
+前提：macOS；PATH 中已安装 Herdr **>= 0.9.0**（实测 0.9.1）、Pi、Node、Python 3；仓库已执行 `npm ci --ignore-scripts`。跑道不自动安装或升级宿主。Herdr 兼容性由适配器的协议/schema 探测决定；Pi 实际版本写入报告，由真实测试检查兼容性。
 
 ```sh
 npm run test:host                       # 仅计划/预检，不启动进程

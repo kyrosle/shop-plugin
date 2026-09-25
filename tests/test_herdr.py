@@ -1,4 +1,4 @@
-"""Adapter tests against sanitized real Herdr 0.9.0 captures.
+"""Adapter tests against sanitized real Herdr 0.9.0 captures (plus the 0.9.1 schema).
 
 Every test uses a fake subprocess runner, so nothing here touches a live
 Herdr session, socket, pane or agent.
@@ -14,6 +14,7 @@ from unittest.mock import patch
 import herdr
 
 FIXTURES = Path(__file__).resolve().parent / 'fixtures' / 'herdr-0.9.0'
+FIXTURES_091 = Path(__file__).resolve().parent / 'fixtures' / 'herdr-0.9.1'
 
 
 def fixture(name):
@@ -64,7 +65,7 @@ class FixtureTests(unittest.TestCase):
     def test_capture_is_sanitized_and_pinned(self):
         provenance = fixture('provenance.json')
         self.assertEqual(provenance['binary_version_output'], 'herdr 0.9.0')
-        self.assertEqual(herdr.BINARY_VERSION, '0.9.0')
+        self.assertEqual(herdr.MIN_BINARY_VERSION, (0, 9, 0))
         summary = fixture('api-schema-summary.json')
         self.assertEqual(summary['protocol'], herdr.PROTOCOL)
         self.assertEqual(summary['schema_version'], herdr.SCHEMA_VERSION)
@@ -151,8 +152,21 @@ class ProbeTests(unittest.TestCase):
     def test_probe_accepts_pinned_real_capture(self):
         runtime = adapter().probe()
         self.assertEqual((runtime.version, runtime.protocol, runtime.schema_version),
-                         (herdr.BINARY_VERSION, herdr.PROTOCOL, herdr.SCHEMA_VERSION))
+                         ('0.9.0', herdr.PROTOCOL, herdr.SCHEMA_VERSION))
         self.assertEqual(runtime.as_dict()['compatible'], True)
+
+    def test_probe_accepts_real_0_9_1_capture(self):
+        runtime = adapter({
+            ('--version',): (0, (FIXTURES_091 / 'version.txt').read_text(), ''),
+            ('api', 'schema', '--json'): (0, (FIXTURES_091 / 'api-schema-document.json').read_text(), ''),
+        }).probe()
+        self.assertEqual((runtime.version, runtime.protocol, runtime.schema_version),
+                         ('0.9.1', herdr.PROTOCOL, herdr.SCHEMA_VERSION))
+        self.assertEqual(runtime.as_dict()['tested_version'], herdr.TESTED_BINARY_VERSION)
+
+    def test_probe_accepts_newer_binary_when_protocol_matches(self):
+        runtime = adapter({('--version',): (0, 'herdr 0.10.0\n', '')}).probe()
+        self.assertEqual(runtime.version, '0.10.0')
 
     def test_probe_refuses_wrong_binary_version(self):
         with self.assertRaises(herdr.HerdrIncompatible) as caught:
@@ -377,7 +391,7 @@ class FocusRouteTests(unittest.TestCase):
     def test_focus_routes_are_declared_and_probe_accepts_them(self):
         runtime = adapter().probe()
         self.assertEqual((runtime.version, runtime.protocol, runtime.schema_version),
-                         (herdr.BINARY_VERSION, herdr.PROTOCOL, herdr.SCHEMA_VERSION))
+                         ('0.9.0', herdr.PROTOCOL, herdr.SCHEMA_VERSION))
         for route in (('workspace', 'focus'), ('tab', 'focus')):
             self.assertIn(route, herdr.ROUTES)
             self.assertIn(route, herdr.FOCUS_ROUTES)
@@ -419,7 +433,7 @@ class FocusRouteTests(unittest.TestCase):
         instance = herdr.Herdr(binary='/fake/herdr', runner=runner)
         # The adapter probe is bypassed deliberately: the route table declares both
         # focus responses and probe() re-checks them against the pinned schema.
-        instance._runtime = herdr.Runtime('/fake/herdr', herdr.BINARY_VERSION, herdr.PROTOCOL,
+        instance._runtime = herdr.Runtime('/fake/herdr', herdr.TESTED_BINARY_VERSION, herdr.PROTOCOL,
                                           herdr.SCHEMA_VERSION)
         instance.focus_workspace('w8')
         self.assertEqual(captured['argv'][1:], ['workspace', 'focus', 'w8'])

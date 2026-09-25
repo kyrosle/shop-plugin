@@ -22,7 +22,10 @@ import re
 import subprocess
 import time
 
-BINARY_VERSION = '0.9.0'
+# Minimum binary, not an exact pin: compatibility is decided by probe()'s
+# protocol/schema check plus every response type and payload key in ROUTES.
+MIN_BINARY_VERSION = (0, 9, 0)
+TESTED_BINARY_VERSION = '0.9.1'
 PROTOCOL = 22
 SCHEMA_VERSION = 1
 
@@ -269,7 +272,8 @@ class Runtime(object):
 
     def as_dict(self):
         return {'binary': self.binary, 'version': self.version, 'protocol': self.protocol,
-                'schema_version': self.schema_version, 'supported_version': BINARY_VERSION,
+                'schema_version': self.schema_version, 'min_version': '.'.join(map(str, MIN_BINARY_VERSION)),
+                'tested_version': TESTED_BINARY_VERSION,
                 'compatible': True}
 
 
@@ -330,9 +334,9 @@ class Herdr(object):
         if not match:
             raise HerdrIncompatible('unparsable herdr --version output: ' + _short(text))
         version = '.'.join(match.groups())
-        if version != BINARY_VERSION:
-            raise HerdrIncompatible('herdr ' + version + ' is not compatible with pinned '
-                                    + BINARY_VERSION + ' (' + self.binary + '); update the adapter deliberately')
+        if tuple(map(int, match.groups())) < MIN_BINARY_VERSION:
+            raise HerdrIncompatible('herdr ' + version + ' is older than minimum '
+                                    + '.'.join(map(str, MIN_BINARY_VERSION)) + ' (' + self.binary + ')')
         # `api schema --json` prints the raw schema document, not the CLI envelope.
         done, _ = self._run([self.binary, 'api', 'schema', '--json'], PROBE_TIMEOUT)
         where = 'herdr api schema --json [exit=' + str(done.returncode) + ']'

@@ -56,7 +56,7 @@
 
 ### 1. 前提
 
-- Herdr **0.9.0**，当前适配器固定协议 **22 / schema 1**；CLI 与运行中的 server 必须兼容。
+- Herdr **>= 0.9.0**（实测 **0.9.1**）；适配器要求协议 **22 / schema 1**，并在启动时核对所用的每个响应类型。CLI 与运行中的 server 必须兼容。
 - Pi **0.85.1 兼容 API**、Node **>=22.19.0**、Python **>=3.9**、Git。Bun 仅开发测试需要。
 - 先在 Pi 配好 Provider、凭据和可用模型；Shop 不提供凭据或预设个人模型。
 - 保留 `@ogulcancelik/pi-herdr`，用于通用 agent 查看、等待和控制能力。

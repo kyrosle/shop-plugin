@@ -146,8 +146,10 @@ resume_agents_on_restore = false
         for binary in ('herdr', 'pi'):
             version = self.command([self.binaries[binary], '--version']).stdout.strip()
             self.report['versions'][binary] = version
-            if binary == 'herdr' and version not in ('0.9.0', 'herdr 0.9.0'):
-                raise RuntimeError(f'Unsupported Herdr adapter version {version}; expected 0.9.0')
+            # Minimum only; the adapter probe gates protocol/schema/response types.
+            match = re.fullmatch(r'(?:herdr )?(\d+)\.(\d+)\.(\d+)', version)
+            if binary == 'herdr' and (not match or tuple(map(int, match.groups())) < (0, 9, 0)):
+                raise RuntimeError(f'Unsupported Herdr version {version}; need >= 0.9.0')
             if binary == 'pi' and not re.fullmatch(r'\d+\.\d+\.\d+(?:[-+].+)?', version):
                 raise RuntimeError(f'Unexpected Pi version response: {version}')
         write_json(self.root / 'pi/settings.json', {'defaultProvider': 'shop-host-fixture', 'defaultModel': 'no-network',
