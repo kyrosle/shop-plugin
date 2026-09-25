@@ -112,7 +112,7 @@ test("Pi sender uses pinned message ID, exact target epoch and MAIN repo for rec
   expect(sent.message_id).toBe("pinned-id");
   expect(sent.to).toEqual({ member_id: "lead", launch_id: "l1", endpoint_epoch: "epoch2" });
   expect(calls[0][calls[0].indexOf("--repo") + 1]).toBe(state.cwd);
-  expect(calls[0][0]).toBe(join(root, "package/bin/shop-transport"));
+  expect(calls[0][0]).toBe(join(root, "package/core/transport_cli.py"));
   publishEndpoint(root, { shop_id: "s1", run_id: "r1", member_id: "lead", launch_id: "replacement", session_id: "new",
     terminal_id: "term2", pane_id: "p2" }, "epoch3", "broker");
   await expect(sendShopEnvelope(pi, ctx, envelope)).rejects.toThrow("E_TARGET_STALE_EPOCH");

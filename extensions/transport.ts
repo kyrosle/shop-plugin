@@ -241,8 +241,9 @@ export async function handleInboundMessage(deps: ReceiveDeps, message: InboundMe
 }
 
 async function callTransportCli(pi: ExtensionAPI, bridge: Bridge, repo: string, runId: string, args: string[]): Promise<PythonDecision> {
+  // bin/shop-transport is a POSIX sh wrapper; python3 must run the Python CLI itself.
   const result = await pi.exec("python3", [
-    join(bridge.core_root, "bin/shop-transport"), "--repo", repo, "--run", runId, ...args,
+    join(bridge.core_root, "core/transport_cli.py"), "--repo", repo, "--run", runId, ...args,
   ], { timeout: 30_000 });
   const text = result.stdout.trim();
   if (result.code !== 0) {

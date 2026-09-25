@@ -148,3 +148,16 @@ test("Python transport tests do not import a live Herdr or socket layer", () => 
     expect(source.includes("PI_SHOP_TRANSPORT_DIR")).toBe(false);
   }
 });
+
+test("every python3 exec in the extension targets a Python source file, never a shell wrapper", () => {
+  const targets: string[] = [];
+  for (const name of readdirSync(join(ROOT, "extensions")).filter(file => file.endsWith(".ts"))) {
+    const source = readFileSync(join(ROOT, "extensions", name), "utf8");
+    for (const match of source.matchAll(/pi\.exec\("python3",\s*\[\s*join\([^,]+,\s*"([^"]+)"\)/g)) targets.push(match[1]);
+  }
+  expect(targets).toContain("core/transport_cli.py");
+  for (const target of targets) {
+    expect(target.endsWith(".py")).toBe(true);
+    expect(readFileSync(join(ROOT, target), "utf8").startsWith("#!/bin/sh")).toBe(false);
+  }
+});
