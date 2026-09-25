@@ -61,6 +61,25 @@ FIDELITY_DISCUSSION = (
     'Decision: reject the YAML/summary idea entirely. Keep report.json with exactly the keys file and first_line. '
     'Acknowledge in one sentence; do not use tools or write files.',
 )
+FIDELITY_READ = ('Background first: read docs/notes-a.md and docs/notes-b.md in full with the read tool, then '
+                 'summarize each in one sentence. Do not write files.')
+REJECTED_REPORTS = ('report.yaml', 'report.txt')
+
+
+def background_notes(name, paragraphs=140):
+    """~45 KB (~11k tokens) of deterministic filler per file, with a distractor legacy report format."""
+    rows = [f'# Background notes {name}', '']
+    for index in range(paragraphs):
+        rows.append(f'Paragraph {name}-{index}: the fixture repository exists for host smoke tests. Build steps, '
+                    f'release notes and review habits are recorded here for context only; item {index} repeats the '
+                    'usual advice to keep changes small, verify with commands and record evidence paths. '
+                    'Nothing in this paragraph is a requirement for the current task.')
+        if index == paragraphs // 2:
+            rows.append('Historical note: older tooling wrote reports as report.txt with a single key named content. '
+                        'That legacy format is retired.')
+    return '\n\n'.join(rows) + '\n'
+
+
 FIDELITY_SPEC = """# SPEC
 
 Objective: produce the report about fixture.txt that the user and the Architect agreed on in their discussion.
@@ -191,10 +210,13 @@ class HostTest:
                                        'worktree integration', 'visual screenshot comparison',
                                        'successful repeated-close acknowledgement']}
         if live:
-            self.report['live'] = {key: live[key] for key in ('model', 'thinking', 'budget_usd', 'max_calls', 'handoff_mode')
+            self.report['live'] = {key: live[key] for key in ('model', 'thinking', 'budget_usd', 'max_calls', 'handoff_mode',
+                                                              'seats_flow', 'fidelity_size', 'handoff_budget_tokens')
                                    if key in live}
             # Inherited by every pane the private server starts, including seats.
             self.env['SHOP_HANDOFF_MODE'] = live.get('handoff_mode', 'auto')
+            if live.get('handoff_budget_tokens'):
+                self.env['SHOP_HANDOFF_BUDGET_TOKENS'] = str(live['handoff_budget_tokens'])
         write_json(self.root / 'owned-test.json', {'nonce': uuid.uuid4().hex, 'runner_pid': os.getpid(),
                                                   'socket': self.env['HERDR_SOCKET_PATH']})
 
@@ -363,6 +385,11 @@ sys.stdout.buffer.write(r.stdout); sys.stderr.buffer.write(r.stderr); sys.exit(r
         self.command(['git', 'add', 'fixture.txt'])
         self.command(['git', '-c', 'user.name=HostFixture', '-c', 'user.email=fixture@example.invalid',
                       '-c', 'core.hooksPath=/dev/null', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'fixture'])
+        if self.live and self.live.get('fidelity_size') == 'large':
+            for name in ('a', 'b'):
+                path = self.root / 'project/docs' / f'notes-{name}.md'
+                path.parent.mkdir(exist_ok=True)
+                path.write_text(background_notes(name))
         if self.live:
             # Fail before any launch if this Pi build cannot resolve the live model.
             listed = self.command([self.binaries['pi'], '--offline', '--no-extensions', '--list-models', model]).stdout
@@ -633,25 +660,28 @@ sys.stdout.buffer.write(r.stdout); sys.stderr.buffer.write(r.stderr); sys.exit(r
                   'Architect did not settle', timeout=timeout)
 
     def seats_spec(self):
-        """/shop-spec: Architect writes SPEC.md and PLAN.md into a new seat run."""
+        """Architect writes SPEC.md and PLAN.md: /shop-go <goal> (one-step) or /shop-spec (two-step)."""
         self.settle_architect(120)
         self.delegation = {'task': SEATS_TASK, 'ledger_start': len(self.usage_records()), 'started': time.monotonic()}
-        self.slash('/shop-spec ' + SEATS_TASK)
+        one_step = self.live.get('seats_flow', 'one-step') == 'one-step'
+        self.slash(('/shop-go ' if one_step else '/shop-spec ') + SEATS_TASK)
         root = self.root / 'project/.shop/seats'
         def written():
             runs = sorted(root.glob('*/')) if root.exists() else []
             return runs and all((runs[-1] / name).exists() and (runs[-1] / name).stat().st_size
                                 for name in ('SPEC.md', 'PLAN.md')) and runs[-1]
         self.delegation['run'] = self.wait(written, 'SPEC.md/PLAN.md not written', timeout=300)
-        self.settle_architect()
+        if not one_step:
+            self.settle_architect()
         self.delegation['spec_seconds'] = round(time.monotonic() - self.delegation['started'], 1)
 
     def seats_go(self):
         """/shop-go: confirm, then the Lead must dispatch a Worker and report back."""
         run = self.delegation['run']
-        self.slash('/shop-go')
-        self.wait(lambda: 'Launch Lead?' in self.screen(), 'Lead launch confirmation not shown', timeout=60)
-        self.api('agent', 'send-keys', self.pane, 'enter')
+        if self.live.get('seats_flow', 'one-step') == 'two-step':
+            self.slash('/shop-go')
+            self.wait(lambda: 'Launch Lead?' in self.screen(), 'Lead launch confirmation not shown', timeout=60)
+            self.api('agent', 'send-keys', self.pane, 'enter')
         report = lambda seat: json.loads((run / 'reports' / (seat + '.json')).read_text())
         self.wait(lambda: (run / 'reports/lead.json').exists(), 'Lead did not report', timeout=self.live['timeout'])
         self.delegation['report_from'] = len(self.usage_records())
@@ -673,7 +703,8 @@ sys.stdout.buffer.write(r.stdout); sys.stderr.buffer.write(r.stderr); sys.exit(r
         """Real Architect turns that establish the constraint and reject the alternative."""
         self.settle_architect(120)
         self.delegation = {'task': 'S2 fidelity', 'ledger_start': len(self.usage_records()), 'started': time.monotonic()}
-        for text in FIDELITY_DISCUSSION:
+        large = self.live.get('fidelity_size') == 'large'
+        for text in ((FIDELITY_READ,) if large else ()) + FIDELITY_DISCUSSION:
             seen = len(self.usage_records())
             self.api('agent', 'prompt', self.pane, text)
             self.wait(lambda: any(row.get('pane') == self.pane and row.get('stopReason') == 'stop'
@@ -705,7 +736,9 @@ sys.stdout.buffer.write(r.stdout); sys.stderr.buffer.write(r.stderr); sys.exit(r
                         and 'Start now' in json.dumps(entry['message'].get('content'))), len(lead_entries))
         lead_session = json.dumps(lead_entries[:kickoff])
         session_reads = session_file_reads(seat['session'] for seat in seats)
-        report_path, rejected = self.root / 'project/report.json', self.root / 'project/report.yaml'
+        report_path = self.root / 'project/report.json'
+        rejected = next((self.root / 'project' / name for name in REJECTED_REPORTS if (self.root / 'project' / name).exists()),
+                        self.root / 'project' / REJECTED_REPORTS[0])
         try:
             produced = json.loads(report_path.read_text())
         except (OSError, ValueError):
@@ -735,6 +768,13 @@ sys.stdout.buffer.write(r.stdout); sys.stderr.buffer.write(r.stderr); sys.exit(r
                                    'cost_usd': round(sum(seat['cost_usd'] for seat in usage.values()), 6)}
         if session_reads:
             raise RuntimeError('Seat bypassed the handoff by reading session files: ' + json.dumps(session_reads)[:1000])
+        if self.live.get('handoff_mode') == 'brief':
+            # Control arm: SPEC lacks the agreement, so the only correct outcome is an honest blocked report.
+            verdict['expected'] = 'blocked without guessing'
+            if verdict['lead_status'] != 'blocked' or produced is not None or rejected.exists():
+                raise RuntimeError('Brief-only handoff should end blocked without output: ' + json.dumps(verdict)[:1500])
+            return
+        verdict['expected'] = 'agreed report delivered'
         if not verdict['faithful']:
             raise RuntimeError('Agreed format not delivered: ' + json.dumps(verdict)[:1500])
 
@@ -980,6 +1020,11 @@ def main():
     parser.add_argument('--live-timeout', type=int, default=900, help='Seconds to wait for live delegation delivery')
     parser.add_argument('--repeat', type=int, default=1, help='Independent isolated runs; live budget applies per run')
     parser.add_argument('--handoff-mode', choices=HANDOFF_MODES, default='auto', help='Seat context handoff (live-seats/live-fidelity)')
+    parser.add_argument('--fidelity-size', choices=('small', 'large'), default='small',
+                        help='live-fidelity: large first reads ~80 KB of background notes (middle handoff band)')
+    parser.add_argument('--handoff-budget-tokens', type=int, help='Test knob: shrink the receiver budget to force curation')
+    parser.add_argument('--seats-flow', choices=('one-step', 'two-step'), default='one-step',
+                        help='live-seats: /shop-go <goal>, or /shop-spec then confirmed /shop-go')
     args = parser.parse_args()
     binaries = {name: shutil.which(command) for name, command in
                 [('herdr','herdr'), ('pi','pi'), ('python','python3'), ('node','node')]}
@@ -1003,7 +1048,9 @@ def main():
         except (ValueError, RuntimeError) as error:
             parser.error(str(error))
         live = {'model': args.live_model, 'thinking': thinking, 'budget_usd': args.live_budget_usd,
-                'max_calls': args.live_max_calls, 'timeout': args.live_timeout, 'handoff_mode': args.handoff_mode}
+                'max_calls': args.live_max_calls, 'timeout': args.live_timeout, 'handoff_mode': args.handoff_mode,
+                'seats_flow': args.seats_flow, 'fidelity_size': args.fidelity_size,
+                'handoff_budget_tokens': args.handoff_budget_tokens}
     if not args.run:
         print(json.dumps({'mode': 'plan_only', 'binaries': binaries, 'scenario': args.scenario,
                           'live': live and {key: live[key] for key in ('model', 'thinking', 'budget_usd', 'max_calls')},

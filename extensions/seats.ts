@@ -3,7 +3,7 @@
 // through a tool, and its pane closes. No resident members, no ticket JSON.
 import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -79,6 +79,12 @@ function handoffMode(): HandoffMode {
   return mode;
 }
 
+/** Test-only knob: a small receiver budget exercises the must-curate path without huge contexts. */
+function budgetOverride(): number | undefined {
+  const value = Number(process.env.SHOP_HANDOFF_BUDGET_TOKENS);
+  return Number.isInteger(value) && value > 0 ? value : undefined;
+}
+
 function newRunId(): string {
   const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\..*/, "").replace("T", "-");
   return `${stamp}-${randomBytes(3).toString("hex")}`;
@@ -121,15 +127,17 @@ function latestRun(ctx: ExtensionContext): string | undefined {
   return entries.filter(entry => entry.type === "custom" && entry.customType === RUN_ENTRY).pop()?.data?.dir;
 }
 
-function specPrompt(runDir: string, goal: string): string {
+function specPrompt(runDir: string, goal: string, launch: boolean): string {
   return [
-    `[Shop /shop-spec] Write the run specification for this goal into ${runDir}. Do not implement anything.`,
+    `[Shop ${launch ? "/shop-go" : "/shop-spec"}] Write the run specification for this goal into ${runDir}. Do not implement anything.`,
     "", `Goal: ${goal}`, "",
-    `${runDir}/SPEC.md: objective; constraints (quote the user's words where they decided something); non-goals; ` +
-      "acceptance criteria that can be checked by reading files or running commands.",
+    `${runDir}/SPEC.md: a decision record, not a full requirements document: objective; decisions and constraints ` +
+      "(quote the user's words where they decided something); non-goals; acceptance criteria checkable by reading " +
+      "files or running commands. Our discussion is handed to the Lead separately, so do not restate its details.",
     `${runDir}/PLAN.md: numbered tasks. Each task: goal, exact files/scope, acceptance check, dependencies, and whether ` +
       "it can run in parallel. Tasks must be executable by a fast model without further design.",
-    "Keep both short. When written, tell the user to review them and run /shop-go.",
+    launch ? "Keep both short. Write both files, then stop: the Lead starts automatically when this turn ends."
+      : "Keep both short. When written, tell the user to review them and run /shop-go.",
   ].join("\n");
 }
 
@@ -139,47 +147,73 @@ function leadBrief(runDir: string): string {
     read("PLAN.md")].join("\n");
 }
 
+async function launchLead(ctx: ExtensionContext, dir: string, confirm: boolean): Promise<void> {
+  if (seatRecords(dir).some(seat => seat.role === "lead")) { ctx.ui.notify("This run already has a Lead", "warning"); return; }
+  const profiles = await seatProfiles();
+  const lead = profiles.lead;
+  if (confirm && ctx.hasUI && !await ctx.ui.confirm("Launch Lead?", `${dir}\nLead: ${lead.model} (${lead.thinking ?? "default"})\n` +
+    `Curator analyzer: ${profiles.worker.model}`)) return;
+  ctx.ui.setStatus("shop-seats", "Handing context to Lead…");
+  try {
+    const handoff = await handoffToChildSession(ctx, {
+      focus: "Lead: decompose PLAN.md into Worker tasks, dispatch, review, report", instruction: LEAD_INSTRUCTION,
+      analyzerModel: profiles.worker.model, receiverModel: lead.model, sessionDir: join(dir, "sessions"),
+      name: "Shop Lead", mode: handoffMode(), budgetTokens: budgetOverride(),
+    });
+    const seat = await spawnSeat({ runDir: dir, id: "lead", role: "lead", anchor: process.env.HERDR_PANE_ID!,
+      direction: "right", cwd: ctx.cwd, parentId: "architect", profile: lead, handoff, brief: leadBrief(dir) });
+    ctx.ui.notify(`Lead started in ${seat.pane} (context ${handoff.mode}: ${handoff.reason}). ` +
+      "Keep talking here; its report will arrive as a message.", "info");
+  } finally {
+    ctx.ui.setStatus("shop-seats", undefined);
+  }
+}
+
+const hasSpec = (dir: string) => existsSync(join(dir, "SPEC.md")) && existsSync(join(dir, "PLAN.md"));
+
 export function registerSeats(pi: ExtensionAPI): void {
   const role = process.env.SHOP_SEAT_ROLE as SeatRole | undefined;
   const runDir = process.env.SHOP_SEAT_RUN;
   const seatId = process.env.SHOP_SEAT_ID;
 
   if (!role) {
-    pi.registerCommand("shop-spec", { description: "Write SPEC.md + PLAN.md for a goal (ephemeral seats)", handler: async (args, ctx) => {
-      if (!args.trim()) { ctx.ui.notify("Usage: /shop-spec <goal>", "info"); return; }
-      if (!ctx.isIdle()) { ctx.ui.notify("Current turn unfinished; nothing started", "warning"); return; }
+    // One-step /shop-go <goal>: launch the Lead when the SPEC-writing turn ends.
+    let pendingGo: string | undefined;
+    const newRun = (ctx: ExtensionContext) => {
       const dir = join(ctx.cwd, ".shop", "seats", newRunId());
       mkdirSync(dir, { recursive: true, mode: 0o700 });
       pi.appendEntry(RUN_ENTRY, { dir });
-      pi.sendUserMessage(specPrompt(dir, args.trim()));
+      return dir;
+    };
+    pi.on("agent_end", async (_event, ctx) => {
+      const dir = pendingGo;
+      if (!dir) return;
+      pendingGo = undefined;
+      if (!hasSpec(dir)) { ctx.ui.notify(`SPEC.md/PLAN.md were not written in ${dir}; Lead not started`, "error"); return; }
+      try { await launchLead(ctx, dir, false); } catch (error) { ctx.ui.notify("Lead launch failed: " + String(error), "error"); }
+    });
+
+    pi.registerCommand("shop-spec", { description: "Write SPEC.md + PLAN.md for a goal (ephemeral seats)", handler: async (args, ctx) => {
+      if (!args.trim()) { ctx.ui.notify("Usage: /shop-spec <goal>", "info"); return; }
+      if (!ctx.isIdle()) { ctx.ui.notify("Current turn unfinished; nothing started", "warning"); return; }
+      pi.sendUserMessage(specPrompt(newRun(ctx), args.trim(), false));
     } });
 
-    pi.registerCommand("shop-go", { description: "Curate context and start the Lead for the latest /shop-spec run", handler: async (args, ctx) => {
-      const dir = args.trim() ? resolve(ctx.cwd, args.trim()) : latestRun(ctx);
-      if (!dir || !existsSync(join(dir, "SPEC.md")) || !existsSync(join(dir, "PLAN.md"))) {
-        ctx.ui.notify("No run with SPEC.md and PLAN.md; run /shop-spec first", "warning"); return;
-      }
-      if (!ctx.isIdle()) { ctx.ui.notify("Current turn unfinished; nothing started", "warning"); return; }
-      if (seatRecords(dir).some(seat => seat.role === "lead")) { ctx.ui.notify("This run already has a Lead", "warning"); return; }
-      const profiles = await seatProfiles();
-      const lead = profiles.lead;
-      if (ctx.hasUI && !await ctx.ui.confirm("Launch Lead?", `${dir}\nLead: ${lead.model} (${lead.thinking ?? "default"})\n` +
-        `Curator analyzer: ${profiles.worker.model}`)) return;
-      ctx.ui.setStatus("shop-seats", "Handing context to Lead…");
-      try {
-        const handoff = await handoffToChildSession(ctx, {
-          focus: "Lead: decompose PLAN.md into Worker tasks, dispatch, review, report", instruction: LEAD_INSTRUCTION,
-          analyzerModel: profiles.worker.model, receiverModel: lead.model, sessionDir: join(dir, "sessions"),
-          name: "Shop Lead", mode: handoffMode(),
-        });
-        const seat = await spawnSeat({ runDir: dir, id: "lead", role: "lead", anchor: process.env.HERDR_PANE_ID!,
-          direction: "right", cwd: ctx.cwd, parentId: "architect", profile: lead, handoff, brief: leadBrief(dir) });
-        ctx.ui.notify(`Lead started in ${seat.pane} (context ${handoff.mode}: ${handoff.reason}). ` +
-          "Keep talking here; its report will arrive as a message.", "info");
-      } finally {
-        ctx.ui.setStatus("shop-seats", undefined);
-      }
-    } });
+    pi.registerCommand("shop-go", {
+      description: "Start the Lead: /shop-go <goal> writes SPEC/PLAN then launches; /shop-go [run-dir] launches a reviewed run",
+      handler: async (args, ctx) => {
+        if (!ctx.isIdle() || pendingGo) { ctx.ui.notify("Current turn unfinished; nothing started", "warning"); return; }
+        const arg = args.trim();
+        const path = arg && resolve(ctx.cwd, arg);
+        if (arg && !(existsSync(path) && statSync(path).isDirectory())) {
+          pendingGo = newRun(ctx);
+          pi.sendUserMessage(specPrompt(pendingGo, arg, true));
+          return;
+        }
+        const dir = path || latestRun(ctx);
+        if (!dir || !hasSpec(dir)) { ctx.ui.notify("No run with SPEC.md and PLAN.md; use /shop-go <goal> or /shop-spec", "warning"); return; }
+        await launchLead(ctx, dir, true);
+      } });
     return;
   }
 
@@ -227,11 +261,12 @@ export function registerSeats(pi: ExtensionAPI): void {
       const handoff = await handoffToChildSession(ctx, {
         focus: `Worker task ${args.id}: ${args.task.slice(0, 600)}`, instruction: WORKER_INSTRUCTION,
         analyzerModel: profiles.worker.model, receiverModel: profiles.worker.model, sessionDir: join(runDir, "sessions"),
-        name: `Shop Worker ${args.id}`, mode: handoffMode(), signal,
+        name: `Shop Worker ${args.id}`, mode: handoffMode(), budgetTokens: budgetOverride(), signal,
       });
       const seat = await spawnSeat({ runDir, id: args.id, role: "worker", anchor: process.env.HERDR_PANE_ID!,
         direction: "down", cwd: ctx.cwd, parentId: seatId, profile: profiles.worker, handoff,
-        brief: `# Shop task ${args.id} (Worker)\nRun directory: ${runDir}\n\n${args.task}\n\nFinish with shop_report exactly once.` });
+        brief: `# Shop task ${args.id} (Worker)\nRun directory: ${runDir}\n\n${args.task}\n\nFinish with shop_report exactly once.\n\n` +
+          "## Run SPEC (constraints and acceptance for context; do only your task above)\n" + readFileSync(join(runDir, "SPEC.md"), "utf8") });
       return { content: [{ type: "text" as const, text: JSON.stringify({ id: args.id, pane: seat.pane, context: handoff.mode }) }],
         details: seat };
     } });

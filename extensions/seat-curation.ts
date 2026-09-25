@@ -38,6 +38,8 @@ export type HandoffRequest = {
   sessionDir: string;
   name: string;
   mode?: HandoffMode;
+  /** Explicit receiver budget; defaults to BUDGET_FRACTION of the receiver's context window. */
+  budgetTokens?: number;
   signal?: AbortSignal;
 };
 
@@ -149,7 +151,7 @@ export async function handoffToChildSession(ctx: ExtensionContext, request: Hand
   analyze: Analyze = analyzePartition): Promise<HandoffResult> {
   const messages = completeMessages(ctx);
   const sourceTokens = messages.reduce((sum, message) => sum + estimateTokens(message), 0);
-  const budgetTokens = Math.floor(receiverWindow(ctx, request.receiverModel) * BUDGET_FRACTION);
+  const budgetTokens = request.budgetTokens ?? Math.floor(receiverWindow(ctx, request.receiverModel) * BUDGET_FRACTION);
   let { mode, reason } = chooseMode(request.mode ?? "auto", sourceTokens, budgetTokens);
   const analyzer: AnalyzerUsage = { calls: 0, input: 0, output: 0, cacheRead: 0, cost: 0 };
   let curated: Awaited<ReturnType<typeof curate>>;

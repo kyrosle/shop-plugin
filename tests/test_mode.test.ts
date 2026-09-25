@@ -69,8 +69,10 @@ test("Herdr factory registers only scoped tools and no interception or outgoing 
     // Reset remains a user command, never a callable model tool or interception.
     extension({on(name:string){hooks.push(name);}, registerTool(t:any){tools.push(t.name);}, registerCommand(name:string){commands.push(name);}} as any);
     expect(commands).toContain("shop-reset");
+    expect(commands).toEqual(expect.arrayContaining(["shop-spec", "shop-go"]));
     expect(tools).toEqual(["shop_message", "shop_status", "shop_patrol", "shop_dispatch", "shop_handoff"]);
-    expect(hooks).toEqual(["session_start","session_shutdown","session_tree","session_tree","session_start","session_shutdown","before_agent_start"]);
+    // agent_end only launches a Lead after an explicit /shop-go <goal>.
+    expect(hooks).toEqual(["agent_end","session_start","session_shutdown","session_tree","session_tree","session_start","session_shutdown","before_agent_start"]);
     expect(hooks).not.toContain("tool_call");
   } finally { if(old===undefined)delete process.env.HERDR_ENV;else process.env.HERDR_ENV=old; }
 });
