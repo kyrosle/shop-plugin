@@ -158,7 +158,7 @@ async function launchLead(ctx: ExtensionContext, dir: string, confirm: boolean):
     const handoff = await handoffToChildSession(ctx, {
       focus: "Lead: decompose PLAN.md into Worker tasks, dispatch, review, report", instruction: LEAD_INSTRUCTION,
       analyzerModel: profiles.worker.model, receiverModel: lead.model, sessionDir: join(dir, "sessions"),
-      name: "Shop Lead", mode: handoffMode(), budgetTokens: budgetOverride(),
+      name: "Shop Lead", from: "Architect", mode: handoffMode(), budgetTokens: budgetOverride(),
     });
     const seat = await spawnSeat({ runDir: dir, id: "lead", role: "lead", anchor: process.env.HERDR_PANE_ID!,
       direction: "right", cwd: ctx.cwd, parentId: "architect", profile: lead, handoff, brief: leadBrief(dir) });
@@ -261,7 +261,7 @@ export function registerSeats(pi: ExtensionAPI): void {
       const handoff = await handoffToChildSession(ctx, {
         focus: `Worker task ${args.id}: ${args.task.slice(0, 600)}`, instruction: WORKER_INSTRUCTION,
         analyzerModel: profiles.worker.model, receiverModel: profiles.worker.model, sessionDir: join(runDir, "sessions"),
-        name: `Shop Worker ${args.id}`, mode: handoffMode(), budgetTokens: budgetOverride(), signal,
+        name: `Shop Worker ${args.id}`, from: "Lead", mode: handoffMode(), budgetTokens: budgetOverride(), signal,
       });
       const seat = await spawnSeat({ runDir, id: args.id, role: "worker", anchor: process.env.HERDR_PANE_ID!,
         direction: "down", cwd: ctx.cwd, parentId: seatId, profile: profiles.worker, handoff,

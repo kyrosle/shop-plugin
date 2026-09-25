@@ -27,7 +27,7 @@ function context(messages: object[], window = 1_000_000) {
 
 const request = (cwd: string, mode?: "auto" | "raw" | "curate" | "brief") => ({
   focus: "Lead: dispatch", instruction: "keep constraints", analyzerModel: "p/analyzer", receiverModel: "p/lead",
-  sessionDir: join(cwd, "sessions"), name: "Shop Lead", ...(mode ? { mode } : {}),
+  sessionDir: join(cwd, "sessions"), name: "Shop Lead", from: "Architect", ...(mode ? { mode } : {}),
 });
 
 const entries = (file: string) => readFileSync(file, "utf8").trim().split("\n").map(line => JSON.parse(line));
@@ -65,6 +65,14 @@ test("auto hands a small context over verbatim without calling the analyzer, par
   expect(messages.length).toBe(conversation.length);
   expect(JSON.stringify(messages)).toContain("never YAML");
   expect(JSON.stringify(messages)).not.toContain("toolCall");
+  // Verbatim history is bracketed and attributed, so the seat cannot take it for its own actions.
+  const written = entries(result.file);
+  const markers = written.filter(entry => entry.type === "custom_message").map(entry => entry.customType);
+  expect(markers).toEqual(["shop-handoff-begin", "shop-handoff-end"]);
+  const first = written.findIndex(entry => entry.customType === "shop-handoff-begin");
+  const last = written.findIndex(entry => entry.customType === "shop-handoff-end");
+  expect(written.slice(first + 1, last).every(entry => entry.type === "message")).toBe(true);
+  expect(written[first].content).toContain("made by Architect, not by you");
   expect(ctx.sessionManager.getEntries().length).toBe(parentBefore);
   expect(SessionManager.open(result.file).buildContextEntries().filter(entry => entry.type === "message").length).toBe(conversation.length);
 });
@@ -91,6 +99,7 @@ test("curate keeps exact blocks, drops the rest, copies no raw messages, and met
   const checkpoint = written.find(entry => entry.customType === "shop-seat-context");
   expect(checkpoint.content).toContain("output must be JSON, never YAML");
   expect(checkpoint.content).not.toContain("Alternative B");
+  expect(checkpoint.content).toContain("taken by Architect, not by you");
 });
 
 test("brief mode hands over no context at all", async () => {

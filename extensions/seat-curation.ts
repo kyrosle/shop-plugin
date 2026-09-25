@@ -37,6 +37,8 @@ export type HandoffRequest = {
   receiverModel: string;
   sessionDir: string;
   name: string;
+  /** Who produced the handed-over history, e.g. "Architect" or "Lead". */
+  from: string;
   mode?: HandoffMode;
   /** Explicit receiver budget; defaults to BUDGET_FRACTION of the receiver's context window. */
   budgetTokens?: number;
@@ -113,7 +115,16 @@ function receiverWindow(ctx: ExtensionContext, selector: string): number {
   return model?.contextWindow || FALLBACK_WINDOW;
 }
 
-function appendVerbatim(child: SessionManager, messages: Message[]): void {
+/** Verbatim history is another agent's: bracket it so the seat never mistakes those tool calls for its own. */
+export function handoffBoundary(from: string, edge: "begin" | "end"): string {
+  return edge === "begin"
+    ? `[Shop handoff] The messages from here until the end marker are ${from}'s history, handed over verbatim for context. ` +
+      `Every tool call and result in them was made by ${from}, not by you; you have done nothing in this run yet.`
+    : `[Shop handoff] End of ${from}'s history. Your own work starts after this marker.`;
+}
+
+function appendVerbatim(child: SessionManager, messages: Message[], from: string): void {
+  child.appendCustomMessageEntry("shop-handoff-begin", handoffBoundary(from, "begin"), true);
   for (const message of messages) {
     const value = message as any;
     if (value.role === "custom") child.appendCustomMessageEntry(value.customType, value.content, value.display ?? true, value.details);
@@ -121,6 +132,7 @@ function appendVerbatim(child: SessionManager, messages: Message[]): void {
       child.appendCustomMessageEntry("shop-seat-summary", value.summary, true);
     } else child.appendMessage(value);
   }
+  child.appendCustomMessageEntry("shop-handoff-end", handoffBoundary(from, "end"), true);
 }
 
 async function curate(ctx: ExtensionContext, request: HandoffRequest, budgetTokens: number, analyzer: AnalyzerUsage,
@@ -139,7 +151,8 @@ async function curate(ctx: ExtensionContext, request: HandoffRequest, budgetToke
     request.signal ?? new AbortController().signal, undefined, undefined, request.instruction);
   const coverage = validateCoverage(nodes, prepared.units.map(unit => unit.id));
   if (!coverage.ok) throw new Error("Curation coverage failed: " + JSON.stringify(coverage).slice(0, 500));
-  const compiled = compileCheckpoint({ ...prepared.snapshot, curationInstruction: request.instruction },
+  const compiled = compileCheckpoint({ ...prepared.snapshot, focus: `${request.focus}\n\nThis checkpoint summarizes ` +
+    `${request.from}'s history; actions in it were taken by ${request.from}, not by you.`, curationInstruction: request.instruction },
     nodes, prepared.unitById, false, "en");
   return { text: compiled.text, details: {
     checkpointTokens: compiled.estimatedTokens, overBudget: compiled.estimatedTokens > budgetTokens,
@@ -166,7 +179,7 @@ export async function handoffToChildSession(ctx: ExtensionContext, request: Hand
   const parent = ctx.sessionManager.getSessionFile();
   const child = SessionManager.create(ctx.cwd, request.sessionDir, parent ? { parentSession: parent } : undefined);
   child.appendSessionInfo(request.name);
-  if (mode === "raw") appendVerbatim(child, messages);
+  if (mode === "raw") appendVerbatim(child, messages, request.from);
   if (mode === "curate" && curated) child.appendCustomMessageEntry("shop-seat-context", curated.text, true, { blocks: curated.details.blocks });
   const file = child.getSessionFile();
   if (!file) throw new Error("Child session has no file path");

@@ -191,7 +191,9 @@ def session_file_reads(session_paths):
                     arguments = part.get('arguments') or {}
                     if part.get('name') == 'read' and str(arguments.get('path', '')).endswith('.jsonl'):
                         found.append({'session': Path(path).name, 'tool': 'read', 'excerpt': str(arguments.get('path'))[:160]})
-                    command = re.sub(r'-not\s+-path\s+\S+', '', str(arguments.get('command', '')))
+                    # Exclusions (find -not/! -path|-name X, grep/rg --exclude...) are the opposite of reading.
+                    command = re.sub(r'(?:-not|!)\s+-\w+\s+\S+|--exclude(?:-dir)?(?:=|\s+)\S+|--glob\s+!\S+', '',
+                                     str(arguments.get('command', '')))
                     if part.get('name') == 'bash' and '.jsonl' in command and READERS.search(command):
                         found.append({'session': Path(path).name, 'tool': 'bash', 'excerpt': command[:160]})
             elif message.get('role') == 'toolResult':

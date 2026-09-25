@@ -432,6 +432,8 @@ class LiveProviderTests(unittest.TestCase):
             {'type': 'toolCall', 'id': 'c', 'name': name, 'arguments': arguments}]}})
         path.write_text('\n'.join([
             call('bash', {'command': "find . -name '*.md' -not -path './s/sessions/*.jsonl'"}),
+            call('bash', {'command': "find .shop -maxdepth 4 -not -name '*.jsonl' | sort; cat SPEC.md"}),
+            call('bash', {'command': "grep -r timeout . --exclude='*.jsonl' ; rg x --glob !*.jsonl"}),
             call('bash', {'command': "python3 -c \"import json,glob; [json.loads(l) for l in open(glob.glob('s/*.jsonl')[0])]\""}),
             call('read', {'path': '/x/sessions/a.jsonl'}),
         ]) + '\n')
