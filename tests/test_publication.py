@@ -19,7 +19,7 @@ class PublicationPrivacyTests(unittest.TestCase):
         self.assertEqual(snapshot['generator']['core_root'], '/opt/shop-plugin')
 
     def test_only_public_user_guides_are_present(self):
-        guides = {'ARCHITECTURE.md', 'INSTALLATION.md', 'MIGRATION.md', 'MODELS.md', 'WORKBENCH.md', 'WORKFLOW.md', 'LANGUAGE.md', 'TESTING.md'}
+        guides = {'ARCHITECTURE.md', 'INSTALLATION.md', 'MIGRATION.md', 'MODELS.md', 'WORKBENCH.md', 'WORKFLOW.md', 'LANGUAGE.md', 'TESTING.md', 'SEATS.md'}
         public = {f'{lang}/{name}' for lang in ('en', 'zh-CN') for name in guides}
         self.assertEqual({str(path.relative_to(ROOT / 'docs')) for path in (ROOT / 'docs').rglob('*.md')}, public)
         package = json.loads((ROOT / 'package.json').read_text())

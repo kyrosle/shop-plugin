@@ -222,6 +222,10 @@ Architect 保留，主 Lead 和快速 Worker 以全新 Pi 会话启动。辅助�
 
 收工前先保存交付、处理完工单、确认写入者停止并显式解除绑定。**`idle` 不证明后台停止。** 当前 Herdr 协议缺少后台进程可见性，收工可能因 `background_state_unknown` 拒绝；不要强行删登记或关窗绕过。
 
+### 4. 预览：用 `/shop-go` 启动一次性席位
+
+更轻的用法，不需要先开工：`/shop-go <目标>` 让 Architect 写一份简短的 SPEC 和 PLAN，然后用交接过去的 Architect 上下文在新 pane 中启动 Lead；Lead 以同样方式派生 Worker，每个席位汇报一次后关闭自己的 pane，结果回到 Architect。想先审阅 SPEC/PLAN 时用 `/shop-spec <目标>`，再执行 `/shop-go`。小上下文原样转交，大上下文按接收方模型压缩。详见[一次性席位](docs/zh-CN/SEATS.md)。
+
 ## 失败与重置
 
 开工失败时不要反复按 U：某个写操作可能已经成功，只是返回解析失败。

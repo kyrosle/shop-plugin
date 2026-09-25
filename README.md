@@ -222,6 +222,10 @@ Viewing the workbench does not dispatch; business changes additionally need an e
 
 Before shutdown, retain delivery, settle tickets, verify stopped writers and explicitly unbind. **`idle` does not prove background work stopped.** The current Herdr protocol lacks background-process visibility; shutdown can refuse with `background_state_unknown`. Do not delete registrations or force-close panes to bypass it.
 
+### 4. Preview: ephemeral seats with `/shop-go`
+
+A lighter alternative that needs no opened Shop: `/shop-go <goal>` makes Architect write a short SPEC and PLAN, then starts a Lead in a new pane from Architect's handed-over context; the Lead spawns Workers the same way, every seat reports once and closes its own pane, and the result arrives back in Architect. Use `/shop-spec <goal>` to review SPEC/PLAN before `/shop-go`. Small contexts are passed verbatim, large ones are curated to fit the receiving model. See [ephemeral seats](docs/en/SEATS.md).
+
 ## Failures and reset
 
 Do not repeatedly press U after setup fails: a mutation may have succeeded even though its response could not be parsed.

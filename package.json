@@ -27,6 +27,7 @@
     "docs/en/MODELS.md",
     "docs/en/WORKBENCH.md",
     "docs/en/WORKFLOW.md",
+    "docs/en/SEATS.md",
     "docs/en/LANGUAGE.md",
     "docs/en/TESTING.md",
     "docs/zh-CN/ARCHITECTURE.md",
@@ -35,6 +36,7 @@
     "docs/zh-CN/MODELS.md",
     "docs/zh-CN/WORKBENCH.md",
     "docs/zh-CN/WORKFLOW.md",
+    "docs/zh-CN/SEATS.md",
     "docs/zh-CN/LANGUAGE.md",
     "docs/zh-CN/TESTING.md",
     "config",
@@ -65,6 +67,6 @@
     "node": ">=22.19.0"
   },
   "dependencies": {
-    "pi-context-curator": "github:kyrosle/pi-context-curator#83b00b2de351bed1fcf234c28786e73e520e3c71"
+    "pi-context-curator": "https://codeload.github.com/kyrosle/pi-context-curator/tar.gz/83b00b2de351bed1fcf234c28786e73e520e3c71"
   }
 }
