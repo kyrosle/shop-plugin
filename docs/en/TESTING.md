@@ -20,6 +20,12 @@ Live runs let models execute commands, so seats load a **private copy of the che
 
 The no-inference lane uses a local fixture provider (thirteen catalogue entries for the picker) and requires **zero provider calls**.
 
+Every lane installs Herdr's official Pi integration (`herdr integration install pi`) into the private Pi directory, because it changes how Herdr tracks the Pi process; `--no-herdr-integration` turns it off.
+
+## Architect front ends
+
+`--architect-client pig` runs Architect through [grok-pi](https://github.com/Dwsy/grok-pi-tui) (`pig`) instead of the plain Pi TUI. pig launches the real Pi through its RPC entry (process `pi-rpc`), with the test's arguments passed after `--`; its bundled bridges (Remote TUI, subagents) stay on. Input is typed into the pane, turn state comes from the fixture, and only the one-step `/shop-go` flow is supported. This combination reproduced a real failure: with the Herdr integration, `herdr agent prompt` to a pig pane is refused ("no longer the pane foreground process"), which is why Lead reports are delivered in-process and the lane requires `reports/lead.delivered`.
+
 ## Live scenarios (opt-in, paid)
 
 ```sh

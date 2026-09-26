@@ -20,6 +20,12 @@
 
 不调用模型的层次使用本地 fixture provider（为模型选择器提供 13 个模型条目），要求 **Provider 调用次数为零**。
 
+每个测试都会把 Herdr 官方的 Pi 集成（`herdr integration install pi`）装进私有的 Pi 目录，因为它会改变 Herdr 跟踪 Pi 进程的方式；`--no-herdr-integration` 可以关闭。
+
+## Architect 前端
+
+`--architect-client pig` 让 Architect 通过 [grok-pi](https://github.com/Dwsy/grok-pi-tui)（`pig`）运行，而不是原生 Pi TUI。pig 通过官方 RPC 入口启动真实的 Pi（进程名 `pi-rpc`），测试参数放在 `--` 之后传入；它自带的桥接扩展（Remote TUI、subagent 等）保持开启。输入通过向 pane 打字完成，回合状态来自 fixture，只支持一步版 `/shop-go`。这个组合复现过一个真实故障：装有 Herdr 集成时，对 pig pane 执行 `herdr agent prompt` 会被拒绝（"no longer the pane foreground process"）。所以 Lead 的汇报改为在进程内送达，测试也要求存在 `reports/lead.delivered`。
+
 ## 真实 Provider 场景（显式启用，会产生费用）
 
 ```sh

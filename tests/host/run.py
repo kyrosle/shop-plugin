@@ -261,17 +261,21 @@ def isolated_env(root, paths):
         'SHOP_CONFIG_DIR': str(root / 'config'),
         'SHOP_STATE_DIR': str(root / 'state'), 'SHOP_HOST_TEST_ROOT': str(root), 'GIT_CONFIG_NOSYSTEM': '1',
         'GIT_CONFIG_GLOBAL': str(root / 'empty-gitconfig'), 'GIT_OPTIONAL_LOCKS': '0',
-        'PYTHONDONTWRITEBYTECODE': '1', 'NO_COLOR': '1',
+        'PYTHONDONTWRITEBYTECODE': '1', 'NO_COLOR': '1', 'GROK_PI_NO_AUTO_UPDATE': '1',
     }
 
 
 class HostTest:
-    def __init__(self, binaries, timeout=30, live=None, credential=None):
+    def __init__(self, binaries, timeout=30, live=None, credential=None, client='pi', herdr_integration=True):
         # Short, canonical path also avoids Unix socket length limits on macOS.
         self.root = Path(tempfile.mkdtemp(prefix='shop-host-', dir='/tmp')).resolve()
         self.root.chmod(0o700)
         self.binaries, self.timeout = binaries, timeout
         self.live, self.credential = live, credential
+        # Architect front end: plain Pi TUI, or pig (grok-pi) driving Pi over RPC as the user runs it.
+        self.client = client
+        # Herdr's official Pi integration reports lifecycle by Pi's PID, as in a real Herdr setup.
+        self.herdr_integration = herdr_integration
         self.architect_model = (live.get('seat_models') or {}).get('architect', live['model']) if live else FIXTURE_MODEL
         # Code the host loads. Live seats have bash, so they get a private snapshot
         # instead of absolute paths into the developer's checkout.
@@ -281,7 +285,7 @@ class HostTest:
         self.log = None
         self.pane = self.tab = None
         self.steps = []
-        self.report = {'schema': 'shop.host-test/v1', 'root': str(self.root), 'steps': self.steps,
+        self.report = {'schema': 'shop.host-test/v1', 'root': str(self.root), 'steps': self.steps, 'architect_client': client,
                        'provider_policy': ('live: one API-key provider, budget-capped, credential deleted after run'
                                            if live else 'local-fixture-only; no user credentials'),
                        'model': self.architect_model,
@@ -428,11 +432,22 @@ resume_agents_on_restore = false
             'runner_sha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
             'fixture_sha256': hashlib.sha256(fixture.read_bytes()).hexdigest(),
         }
+        integration = []
+        if self.herdr_integration:
+            self.command([self.binaries['herdr'], 'integration', 'install', 'pi'])
+            installed = sorted((self.root / 'pi').rglob('herdr-agent-state.ts'))
+            if len(installed) != 1:
+                raise RuntimeError('Herdr Pi integration not installed inside the private Pi directory')
+            self.report['herdr_integration'] = next((line.split('=', 1)[1] for line in installed[0].read_text().splitlines()
+                                                     if 'HERDR_INTEGRATION_VERSION=' in line), 'unknown')
+            integration = ['-e', str(installed[0])]
         # Live seats need tools: Shop's own tools and bash for shop-run/herdr.
         args = [self.binaries['pi'], '--offline', '--no-extensions', '--no-skills', '--no-prompt-templates',
                 '--no-themes', '--no-context-files', *([] if self.live else ['--no-tools']), '--approve',
-                '-e', str(self.package / 'extensions/index.ts'), '-e', str(fixture),
+                '-e', str(self.package / 'extensions/index.ts'), '-e', str(fixture), *integration,
                 '--provider', provider, '--model', model, '--thinking', architect_thinking]
+        # pig must launch the real Pi itself (its official rpc-entry, process name pi-rpc), exactly as users run it.
+        self.pi_args = args[1:]
         wrapper = self.root / 'bin/pi'
         wrapper.write_text('#!/bin/sh\nexec ' + shlex.join(args) + ' "$@"\n')
         wrapper.chmod(0o700)
@@ -489,11 +504,20 @@ resume_agents_on_restore = false
         created = self.api('workspace', 'create', '--cwd', str(self.root / 'project'), '--label', 'Shop host test', '--no-focus')
         self.pane, self.tab = created['root_pane']['pane_id'], created['tab']['tab_id']
         self.report.update(pane=self.pane, tab=self.tab)
-        self.api('agent', 'start', 'host-architect', '--kind', 'pi', '--pane', self.pane, '--timeout', '30000')
+        if self.client == 'pig':
+            # pig runs our isolated Pi wrapper with --mode rpc; its bundled bridges (Remote TUI, subagents) stay on.
+            self.command([self.binaries['herdr'], 'pane', 'run', self.pane,
+                          shlex.join([self.binaries['pig'], '--pi-bin', self.binaries['pi'], '--offline', '--', *self.pi_args])
+                          + ' 2>' + shlex.quote(str(self.root / 'pig.err'))])
+        else:
+            self.api('agent', 'start', 'host-architect', '--kind', 'pi', '--pane', self.pane, '--timeout', '30000')
         self.wait(lambda: (self.root / 'observations' / (self.pane + '.json')).exists(), 'Real Pi extension did not start')
         observed = json.loads((self.root / 'observations' / (self.pane + '.json')).read_text())
         if observed['mode'] != 'tui' or not observed['hasUI'] or not REQUIRED_COMMANDS <= set(observed['commands']):
             raise RuntimeError('Real Pi did not load expected TUI commands: ' + str(observed))
+        if self.client == 'pig':
+            processes = self.api('pane', 'process-info', '--pane', self.pane)['process_info']['foreground_processes']
+            self.report['architect_processes'] = sorted(p.get('argv0', '') for p in processes)
         if observed['socket'] != self.env['HERDR_SOCKET_PATH'] or observed['model'] != self.architect_model:
             raise RuntimeError('Pi escaped isolated socket or expected model')
         if self.live and observed.get('thinking') != self.live['thinking']['architect']:
@@ -501,9 +525,24 @@ resume_agents_on_restore = false
         self.report['real_pi_tui'] = True
         self.api('pane', 'layout', '--pane', self.pane)
 
+    def send(self, text):
+        """Type into Architect. pig is not always the pane's recognised foreground agent, so type into the pane."""
+        if self.client == 'pig':
+            self.command([self.binaries['herdr'], 'pane', 'run', self.pane, text])
+        else:
+            self.api('agent', 'prompt', self.pane, text)
+
     def slash(self, command):
         # Slash commands do not trigger model turns; --wait would falsely require one.
-        self.api('agent', 'prompt', self.pane, command)
+        self.send(command)
+
+    def architect_idle(self):
+        """From the fixture's turn events, so it works whatever front end wraps Pi."""
+        path = self.root / 'observations' / (self.pane + '.busy.json')
+        try:
+            return not json.loads(path.read_text())['busy']
+        except (OSError, ValueError, KeyError):
+            return True
 
     def screen(self):
         # Herdr read commands return terminal text, unlike topology JSON replies.
@@ -560,7 +599,11 @@ resume_agents_on_restore = false
     def live_roundtrip(self, pane):
         """One real model turn in a pane, proven by the fixture usage ledger."""
         seen = len(self.usage_records())
-        self.api('agent', 'prompt', pane, f'Connectivity check. Reply with exactly {LIVE_TOKEN} and nothing else. Do not use tools.')
+        text = f'Connectivity check. Reply with exactly {LIVE_TOKEN} and nothing else. Do not use tools.'
+        if pane == self.pane:
+            self.send(text)
+        else:
+            self.api('agent', 'prompt', pane, text)
         def replied():
             rows = self.usage_records()[seen:]
             return next((row for row in rows if row.get('pane') == pane and LIVE_TOKEN in (row.get('text') or '')), None)
@@ -591,6 +634,9 @@ resume_agents_on_restore = false
             rows = self.usage_records()[answer_from:]
             return next((row for row in rows if row.get('pane') == self.pane and row.get('stopReason') == 'stop'
                          and mentions_fixture(row.get('text'))), None)
+        run = self.delegation.get('run')
+        if run and not self.wait(lambda: (run / 'reports/lead.delivered').exists(), 'Lead report not delivered in-process', timeout=60):
+            raise RuntimeError('Lead report not delivered in-process')
         row = self.wait(reported, 'Architect did not report the fixture content back',
                         timeout=max(60, self.live['timeout'] - self.delegation['accepted_seconds']))
         rows = self.usage_records()[start:]
@@ -617,8 +663,7 @@ resume_agents_on_restore = false
         }
 
     def settle_architect(self, timeout=300):
-        self.wait(lambda: self.api('agent', 'get', self.pane)['agent']['agent_status'] in ('idle', 'done'),
-                  'Architect did not settle', timeout=timeout)
+        self.wait(self.architect_idle, 'Architect did not settle', timeout=timeout)
 
     def seats_spec(self):
         """Architect writes SPEC.md and PLAN.md: /shop-go <goal> (one-step) or /shop-spec (two-step)."""
@@ -667,7 +712,7 @@ resume_agents_on_restore = false
         large = self.live.get('fidelity_size') == 'large'
         for text in ((FIDELITY_READ,) if large else ()) + FIDELITY_DISCUSSION:
             seen = len(self.usage_records())
-            self.api('agent', 'prompt', self.pane, text)
+            self.send(text)
             self.wait(lambda: any(row.get('pane') == self.pane and row.get('stopReason') == 'stop'
                                   for row in self.usage_records()[seen:]), 'Architect did not answer', timeout=240)
             self.settle_architect()
@@ -949,6 +994,9 @@ resume_agents_on_restore = false
                     self.step('seats.go_worker_delivery', self.seats_go)
                     self.step('live.architect_report', self.live_architect_report)
                     self.step('seats.panes_closed', self.seats_closed)
+            elif self.client == 'pig':
+                # pig renders Pi panels through Remote TUI on its own screen; start() already verified commands.
+                self.report['not_covered'] = ['configuration panel keystrokes under pig']
             else:
                 self.step('pi.commands_configuration_reload', self.configuration_ui)
             if (self.root/'provider-calls.jsonl').exists():
@@ -1025,6 +1073,10 @@ def main():
     parser.add_argument('--handoff-budget-tokens', type=int, help='Test knob: shrink the receiver budget to force curation')
     parser.add_argument('--failure-case', choices=tuple(FAILURE_TASKS), default='missing',
                         help='live-failure: missing input, or a Worker pane closed mid-task')
+    parser.add_argument('--architect-client', choices=('pi', 'pig'), default='pi',
+                        help='Architect front end: plain Pi TUI, or pig (grok-pi) driving Pi over RPC')
+    parser.add_argument('--no-herdr-integration', action='store_true',
+                        help="Do not install Herdr's official Pi lifecycle integration in the private Pi directory")
     parser.add_argument('--seats-flow', choices=('one-step', 'two-step'), default='one-step',
                         help='live-seats: /shop-go <goal>, or /shop-spec then confirmed /shop-go')
     args = parser.parse_args()
@@ -1032,6 +1084,10 @@ def main():
                 [('herdr','herdr'), ('pi','pi'), ('python','python3'), ('node','node')]}
     if args.pi_bin:
         binaries['pi'] = shutil.which(args.pi_bin)
+    if args.architect_client == 'pig':
+        binaries['pig'] = shutil.which('pig')
+        if args.seats_flow == 'two-step':
+            parser.error('--architect-client pig supports the one-step /shop-go flow only')
     if not all(binaries.values()):
         parser.error('herdr, pi, python3 and node must already be installed; no automatic installation')
     if not 1 <= args.repeat <= 20:
@@ -1060,7 +1116,7 @@ def main():
     if not args.run:
         print(json.dumps({'mode': 'plan_only', 'binaries': binaries, 'scenario': args.scenario,
                           'live': live and {key: live[key] for key in ('model', 'thinking', 'budget_usd', 'max_calls', 'seat_models')},
-                          'repeat': args.repeat,
+                          'repeat': args.repeat, 'architect_client': args.architect_client,
                           'launch': 'Use --run to opt in; no user server inherited' + (
                               '; live copies one API-key credential and spends up to the budget' if live
                               else '; no credentials'),
@@ -1077,7 +1133,8 @@ def main():
         for index in range(args.repeat):
             if args.repeat > 1:
                 print(f'=== run {index + 1}/{args.repeat} ===', flush=True)
-            host = HostTest(binaries, live=live, credential=credential)
+            host = HostTest(binaries, live=live, credential=credential, client=args.architect_client,
+                            herdr_integration=not args.no_herdr_integration)
             host.run(args.scenario)
             reports.append(json.loads((host.root / 'report.json').read_text()))
         if args.repeat > 1:

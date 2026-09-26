@@ -60,6 +60,14 @@ export default function fixture(pi: ExtensionAPI) {
   } });
   pi.registerCommand("shop-host-background-stop", { description: "Isolated fixture only", handler: stopJob });
   pi.on("session_shutdown", stopJob);
+  // Turn state independent of Herdr agent detection (a wrapper such as pig may hide Pi from it).
+  const busyFile = () => join(root, "observations", process.env.HERDR_PANE_ID + ".busy.json");
+  const recordBusy = (busy: boolean) => {
+    writeFileSync(busyFile() + ".tmp", JSON.stringify({ busy, at: Date.now() }), { mode: 0o600 });
+    renameSync(busyFile() + ".tmp", busyFile());
+  };
+  pi.on("agent_start", () => recordBusy(true));
+  pi.on("agent_end", () => recordBusy(false));
   // Live lane budget/evidence ledger: usage and a short text excerpt only.
   pi.on("message_end", (event) => {
     const message = event.message;

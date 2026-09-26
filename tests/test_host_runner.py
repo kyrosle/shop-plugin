@@ -329,6 +329,28 @@ class LiveProviderTests(unittest.TestCase):
         self.addCleanup(shutil.rmtree, host.root)
         self.assertEqual(host.architect_model, 'cheap/strong')
 
+    def test_pig_client_types_into_the_pane_and_uses_fixture_turn_state(self):
+        host = host_runner.HostTest({key: '/test-bin/' + key for key in ('herdr', 'pi', 'python', 'node', 'pig')},
+                                    live=dict(LIVE), credential={}, client='pig')
+        self.addCleanup(shutil.rmtree, host.root)
+        host.pane = 'w1:p1'
+        host.command, host.api = Mock(), Mock()
+        host.send('/shop-go demo')
+        host.command.assert_called_once_with(['/test-bin/herdr', 'pane', 'run', 'w1:p1', '/shop-go demo'])
+        host.api.assert_not_called()
+        (host.root / 'observations').mkdir()
+        self.assertTrue(host.architect_idle())
+        (host.root / 'observations/w1:p1.busy.json').write_text(json.dumps({'busy': True}))
+        self.assertFalse(host.architect_idle())
+        self.assertEqual(host.report['architect_client'], 'pig')
+
+    def test_pig_rejects_two_step_flow(self):
+        code, _, errors, constructor = self.main('--run', '--scenario', 'live-seats', '--live-model', 'cheap/flash',
+                                                 '--architect-client', 'pig', '--seats-flow', 'two-step')
+        self.assertEqual(code, 2)
+        self.assertIn('one-step', errors)
+        constructor.assert_not_called()
+
     def test_parallel_and_failure_scenarios_step_order(self):
         for scenario, steps in (('live-parallel', ['parallel.delivery']), ('live-failure', ['failure.report'])):
             host = self.live_host()
