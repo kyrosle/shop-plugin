@@ -190,6 +190,72 @@ function leadBrief(runDir: string): string {
     read("PLAN.md")].join("\n");
 }
 
+export function leadReportMessage(runDir: string, report: SeatReport): string {
+  return [
+    `[Shop] Lead report for ${runDir}: ${report.status}.`, report.summary.slice(0, 6000), "",
+    "First answer the user's original request directly with the actual result (what was found, produced or changed). " +
+      `Then briefly note verification against ${runDir}/SPEC.md acceptance criteria (reports are in ${runDir}/reports).`,
+  ].join("\n");
+}
+
+/**
+ * Deliver the Lead's report into this Pi in-process, exactly once per run. Claim-then-send with an exclusive
+ * marker: parallel watchers (e.g. across /reload) cannot duplicate it, and a failed send releases the claim.
+ * No terminal injection: works whatever wraps Pi in the pane and whether Pi is busy.
+ */
+export function deliverLeadReport(pi: Pick<ExtensionAPI, "sendUserMessage">, runDir: string, idle: boolean): boolean {
+  const report = seatReport(runDir, "lead");
+  if (!report) return false;
+  const marker = join(runDir, "reports", "lead.delivered");
+  try { writeFileSync(marker, new Date().toISOString() + "\n", { flag: "wx", mode: 0o600 }); } catch { return false; }
+  try {
+    pi.sendUserMessage(leadReportMessage(runDir, report), idle ? undefined : { deliverAs: "followUp" });
+    return true;
+  } catch (error) {
+    try { unlinkSync(marker); } catch { /* already released */ }
+    throw error;
+  }
+}
+
+const watchers = new Map<string, ReturnType<typeof setInterval>>();
+
+/** Poll a run until its Lead report is delivered, or report a Lead pane that vanished without one. */
+export function watchRun(pi: ExtensionAPI, ctx: ExtensionContext, runDir: string): void {
+  if (watchers.has(runDir) || existsSync(join(runDir, "reports", "lead.delivered"))) return;
+  let lastLiveness = 0;
+  const timer = setInterval(async () => {
+    try {
+      if (deliverLeadReport(pi, runDir, ctx.isIdle())) { clearInterval(timer); watchers.delete(runDir); return; }
+      if (existsSync(join(runDir, "reports", "lead.delivered"))) { clearInterval(timer); watchers.delete(runDir); return; }
+      const lead = seatRecords(runDir).find(seat => seat.role === "lead");
+      if (lead && Date.now() - lastLiveness > 15_000) {
+        lastLiveness = Date.now();
+        try { await herdr("pane", "get", lead.pane); } catch {
+          if (!seatReport(runDir, "lead")) {
+            clearInterval(timer); watchers.delete(runDir);
+            ctx.ui.notify(`Shop Lead pane ${lead.pane} closed without a report; see ${runDir}`, "error");
+          }
+        }
+      }
+    } catch (error) {
+      ctx.ui.notify("Shop report delivery failed, will retry: " + String(error).slice(0, 200), "warning");
+    }
+  }, 2000);
+  timer.unref?.();
+  watchers.set(runDir, timer);
+}
+
+function stopWatchers(): void {
+  for (const timer of watchers.values()) clearInterval(timer);
+  watchers.clear();
+}
+
+function sessionRuns(ctx: ExtensionContext): string[] {
+  const entries = ctx.sessionManager.getEntries() as Array<{ type: string; customType?: string; data?: { dir?: string } }>;
+  return [...new Set(entries.filter(entry => entry.type === "custom" && entry.customType === RUN_ENTRY)
+    .map(entry => entry.data?.dir).filter((dir): dir is string => !!dir))];
+}
+
 async function launchLead(pi: ExtensionAPI, ctx: ExtensionContext, dir: string, confirm: boolean): Promise<void> {
   if (seatRecords(dir).some(seat => seat.role === "lead")) { ctx.ui.notify("This run already has a Lead", "warning"); return; }
   const profiles = await resolveRunProfiles(pi, ctx, dir);
@@ -205,6 +271,7 @@ async function launchLead(pi: ExtensionAPI, ctx: ExtensionContext, dir: string, 
     });
     const seat = await spawnSeat({ runDir: dir, id: "lead", role: "lead", anchor: process.env.HERDR_PANE_ID!,
       direction: "right", cwd: ctx.cwd, parentId: "architect", profile: lead, handoff, brief: leadBrief(dir) });
+    watchRun(pi, ctx, dir);
     ctx.ui.notify(`Lead started in ${seat.pane} (context ${handoff.mode}: ${handoff.reason}). ` +
       "Keep talking here; its report will arrive as a message.", "info");
   } finally {
@@ -229,6 +296,11 @@ export function registerSeats(pi: ExtensionAPI): void {
       pi.appendEntry(RUN_ENTRY, { dir });
       return dir;
     };
+    pi.on("session_start", async (_event, ctx) => {
+      // Resume delivery for this session's runs whose Lead started but whose report was not yet delivered.
+      for (const dir of sessionRuns(ctx)) if (seatRecords(dir).some(seat => seat.role === "lead")) watchRun(pi, ctx, dir);
+    });
+    pi.on("session_shutdown", async () => stopWatchers());
     pi.on("agent_end", async (_event, ctx) => {
       const dir = pendingGo;
       if (!dir) return;
@@ -277,13 +349,7 @@ export function registerSeats(pi: ExtensionAPI): void {
         ...(args.evidence ? { evidence: args.evidence } : {}), at: new Date().toISOString() };
       atomicJson(join(runDir, "reports", seatId + ".json"), report);
       reported = true;
-      if (role === "lead") {
-        await herdr("agent", "prompt", process.env.SHOP_SEAT_PARENT_PANE!, [
-          `[Shop] Lead report for ${runDir}: ${args.status}.`, args.summary.slice(0, 3000), "",
-          "First answer the user's original request directly with the actual result (what was found, produced or changed). " +
-            `Then briefly note verification against ${runDir}/SPEC.md acceptance criteria (reports are in ${runDir}/reports).`,
-        ].join("\n"));
-      }
+      // The Architect's extension picks the Lead report up from disk and delivers it in-process.
       return { content: [{ type: "text" as const, text: "Reported. Stop now; this seat will close." }], details: report };
     } });
 
