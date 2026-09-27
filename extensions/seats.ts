@@ -210,6 +210,8 @@ export function leadReportMessage(runDir: string, report: SeatReport): string {
     `[Shop] Lead report for ${runDir}: ${report.status}.`, report.summary.slice(0, 6000), "",
     "First answer the user's original request directly with the actual result (what was found, produced or changed). " +
       `Then briefly note verification against ${runDir}/SPEC.md acceptance criteria (reports are in ${runDir}/reports).`,
+    "If the run is blocked or incomplete, say exactly what is missing and how to retry (for example a new /shop-go); " +
+      "do not do the missing work yourself unless the user asks you to.",
   ].join("\n");
 }
 
@@ -315,6 +317,15 @@ async function launchLead(pi: ExtensionAPI, ctx: ExtensionContext, dir: string, 
   }
 }
 
+/** A failed launch must stay visible: a transient toast is easy to miss in a busy front end such as pig. */
+export function reportLaunchFailure(pi: Pick<ExtensionAPI, "sendMessage">, ctx: Pick<ExtensionContext, "ui">, dir: string, error: unknown): void {
+  const detail = String(error instanceof Error ? error.message : error).slice(0, 1500);
+  try { writeFileSync(join(dir, "launch-error.txt"), new Date().toISOString() + "\n" + detail + "\n", { mode: 0o600 }); } catch { /* best effort */ }
+  const text = `[Shop] Lead launch failed for ${dir}; no seat was started.\n${detail}\nRetry with /shop-go ${dir}`;
+  ctx.ui.notify(text, "error");
+  try { pi.sendMessage({ customType: "shop-seat-error", content: text, display: true }, { triggerTurn: false }); } catch { /* notify already shown */ }
+}
+
 const hasSpec = (dir: string) => existsSync(join(dir, "SPEC.md")) && existsSync(join(dir, "PLAN.md"));
 
 export function registerSeats(pi: ExtensionAPI): void {
@@ -342,7 +353,7 @@ export function registerSeats(pi: ExtensionAPI): void {
           if (claimLaunch(dir)) ctx.ui.notify(`SPEC.md/PLAN.md were not written in ${dir}; Lead not started`, "error");
           continue;
         }
-        try { await launchLead(pi, ctx, dir, false); } catch (error) { ctx.ui.notify("Lead launch failed: " + String(error), "error"); }
+        try { await launchLead(pi, ctx, dir, false); } catch (error) { reportLaunchFailure(pi, ctx, dir, error); }
       }
     });
 
@@ -369,7 +380,7 @@ export function registerSeats(pi: ExtensionAPI): void {
         }
         const dir = path || latestRun(ctx);
         if (!dir || !hasSpec(dir)) { ctx.ui.notify("No run with SPEC.md and PLAN.md; use /shop-go <goal> or /shop-spec", "warning"); return; }
-        await launchLead(pi, ctx, dir, true);
+        try { await launchLead(pi, ctx, dir, true); } catch (error) { reportLaunchFailure(pi, ctx, dir, error); }
       } });
     return;
   }

@@ -125,7 +125,13 @@ test("too short to curate falls back to verbatim inside the budget", async () =>
   expect(result.reason).toContain("too short");
 });
 
-test("coverage failure refuses to write a lossy child", async () => {
+test("a failed curation inside the budget falls back to verbatim; beyond the budget it still fails", async () => {
   const { cwd, ctx } = context(conversation);
-  await expect(handoffToChildSession(ctx, request(cwd, "curate"), async () => [])).rejects.toThrow("coverage");
+  for (const analyze of [async () => [], async () => { throw new Error("invalid analyzer JSON"); }] as Analyze[]) {
+    const result = await handoffToChildSession(ctx, request(cwd, "curate"), analyze);
+    expect(result.mode).toBe("raw");
+    expect(result.reason).toContain("curation failed");
+  }
+  const small = context(conversation, 100);
+  await expect(handoffToChildSession(small.ctx, request(small.cwd, "curate"), async () => [])).rejects.toThrow("coverage");
 });

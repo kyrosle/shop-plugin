@@ -169,11 +169,18 @@ export async function handoffToChildSession(ctx: ExtensionContext, request: Hand
   const analyzer: AnalyzerUsage = { calls: 0, input: 0, output: 0, cacheRead: 0, cost: 0 };
   let curated: Awaited<ReturnType<typeof curate>>;
   if (mode === "curate") {
-    curated = await curate(ctx, request, budgetTokens, analyzer, analyze);
+    try {
+      curated = await curate(ctx, request, budgetTokens, analyzer, analyze);
+    } catch (error) {
+      // The analyzer is a model: a malformed or incomplete grouping must not block a handoff that fits verbatim.
+      if (sourceTokens > budgetTokens) throw error;
+      curated = undefined;
+      reason += `; curation failed (${String(error instanceof Error ? error.message : error).slice(0, 160)})`;
+    }
     if (!curated) {
       if (sourceTokens > budgetTokens) throw new Error("Context exceeds the receiver budget but cannot be curated");
       mode = "raw";
-      reason += "; too short to curate, passed verbatim";
+      reason += reason.includes("curation failed") ? ", passed verbatim" : "; too short to curate, passed verbatim";
     }
   }
   const parent = ctx.sessionManager.getSessionFile();

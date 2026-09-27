@@ -4,7 +4,8 @@ import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { writeFileSync as write, mkdirSync as mkdir, existsSync } from "node:fs";
-import { claimLaunch, deliverLeadReport, excludeShopDir, pendingLaunches, seatAgentName, startWhenShellReady } from "../extensions/seats.ts";
+import { claimLaunch, deliverLeadReport, excludeShopDir, leadReportMessage, pendingLaunches, reportLaunchFailure, seatAgentName, startWhenShellReady } from "../extensions/seats.ts";
+import { readFileSync as read } from "node:fs";
 
 test("run records are excluded from git status once, via the repo-local exclude file", async () => {
   const repo = mkdtempSync(join(tmpdir(), "seats-exclude-"));
@@ -71,4 +72,21 @@ test("one-step runs stay pending until their Lead launch is claimed, exactly onc
   expect(claimLaunch(oneStep)).toBe(true);
   expect(claimLaunch(oneStep)).toBe(false);
   expect(pendingLaunches(ctx)).toEqual([]);
+});
+
+test("a failed Lead launch leaves an error file and a persistent message, without starting a turn", () => {
+  const run = mkdtempSync(join(tmpdir(), "seats-fail-"));
+  const notices: string[] = [], messages: any[] = [];
+  reportLaunchFailure({ sendMessage: (message: any, options: any) => messages.push({ message, options }) } as any,
+    { ui: { notify: (text: string) => notices.push(text) } } as any, run, new Error("Curation coverage failed"));
+  expect(read(join(run, "launch-error.txt"), "utf8")).toContain("Curation coverage failed");
+  expect(notices[0]).toContain("Retry with /shop-go " + run);
+  expect(messages[0].message.customType).toBe("shop-seat-error");
+  expect(messages[0].options).toEqual({ triggerTurn: false });
+});
+
+test("the delivered report tells Architect not to redo missing work itself", () => {
+  const text = leadReportMessage("/run", { id: "lead", role: "lead", status: "blocked", summary: "Worker 1 could not start", at: "t" });
+  expect(text).toContain("do not do the missing work yourself");
+  expect(text).toContain("blocked");
 });
