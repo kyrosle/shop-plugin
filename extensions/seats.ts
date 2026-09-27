@@ -126,6 +126,21 @@ export function seatAgentName(runDir: string, id: string): string {
   return `s${run}-${slug}-${digest}`;
 }
 
+/**
+ * A freshly split pane runs the user's shell, which may still be starting (zsh with plugins can take seconds);
+ * herdr refuses `agent start` until it is an available shell. Retry only that refusal.
+ */
+export async function startWhenShellReady(args: string[], start = (a: string[]) => herdr("agent", "start", ...a),
+  deadlineMs = 30_000, intervalMs = 500): Promise<void> {
+  const deadline = Date.now() + deadlineMs;
+  while (true) {
+    try { await start(args); return; } catch (error) {
+      if (!String(error).includes("agent_pane_busy") || Date.now() > deadline) throw error;
+      await new Promise(resolveWait => setTimeout(resolveWait, intervalMs));
+    }
+  }
+}
+
 /** Open a pane next to `anchor`, start Pi on the child session with the brief pinned in its system prompt. */
 async function spawnSeat(options: {
   runDir: string; id: string; role: SeatRole; anchor: string; direction: "right" | "down"; cwd: string;
@@ -151,9 +166,9 @@ async function spawnSeat(options: {
     handoff: (({ file: _file, ...rest }) => rest)(handoff), started_at: new Date().toISOString(),
   };
   try {
-    await herdr("agent", "start", seatAgentName(runDir, id), "--kind", "pi", "--pane", pane, "--timeout", "120000", "--",
+    await startWhenShellReady([seatAgentName(runDir, id), "--kind", "pi", "--pane", pane, "--timeout", "120000", "--",
       "--session", handoff.file, "--model", profile.model, ...(profile.thinking ? ["--thinking", profile.thinking] : []),
-      "--append-system-prompt", prompt);
+      "--append-system-prompt", prompt]);
     // Record only a seat that really started, so a failed spawn can never be waited on.
     atomicJson(join(runDir, "seats", id + ".json"), seat);
     await herdr("agent", "prompt", pane, "Start now: follow the Shop brief in your system prompt.");
@@ -250,6 +265,22 @@ function stopWatchers(): void {
   watchers.clear();
 }
 
+type RunEntry = { dir?: string; launch?: boolean };
+
+/** One-step runs of this session still waiting for their Lead (survives /reload and duplicate command delivery). */
+export function pendingLaunches(ctx: ExtensionContext): string[] {
+  const entries = ctx.sessionManager.getEntries() as Array<{ type: string; customType?: string; data?: RunEntry }>;
+  return entries.filter(entry => entry.type === "custom" && entry.customType === RUN_ENTRY && entry.data?.launch && entry.data.dir)
+    .map(entry => entry.data!.dir!)
+    .filter(dir => existsSync(dir) && !existsSync(join(dir, "launch.claimed")) && !seatRecords(dir).some(seat => seat.role === "lead"));
+}
+
+/** Exactly one launcher wins a run, even with two extension instances or two agent_end deliveries. */
+export function claimLaunch(dir: string): boolean {
+  try { writeFileSync(join(dir, "launch.claimed"), new Date().toISOString() + "\n", { flag: "wx", mode: 0o600 }); return true; }
+  catch { return false; }
+}
+
 function sessionRuns(ctx: ExtensionContext): string[] {
   const entries = ctx.sessionManager.getEntries() as Array<{ type: string; customType?: string; data?: { dir?: string } }>;
   return [...new Set(entries.filter(entry => entry.type === "custom" && entry.customType === RUN_ENTRY)
@@ -258,12 +289,15 @@ function sessionRuns(ctx: ExtensionContext): string[] {
 
 async function launchLead(pi: ExtensionAPI, ctx: ExtensionContext, dir: string, confirm: boolean): Promise<void> {
   if (seatRecords(dir).some(seat => seat.role === "lead")) { ctx.ui.notify("This run already has a Lead", "warning"); return; }
-  const profiles = await resolveRunProfiles(pi, ctx, dir);
-  const lead = profiles.lead;
-  if (confirm && ctx.hasUI && !await ctx.ui.confirm("Launch Lead?", `${dir}\nLead: ${lead.model} (${lead.thinking ?? "default"})\n` +
-    `Curator analyzer: ${profiles.worker.model}`)) return;
+  if (!claimLaunch(dir)) { ctx.ui.notify(`${dir} is already being launched`, "warning"); return; }
+  const release = () => { try { unlinkSync(join(dir, "launch.claimed")); } catch { /* already released */ } };
+  let launched = false;
   ctx.ui.setStatus("shop-seats", "Handing context to Lead…");
   try {
+    const profiles = await resolveRunProfiles(pi, ctx, dir);
+    const lead = profiles.lead;
+    if (confirm && ctx.hasUI && !await ctx.ui.confirm("Launch Lead?", `${dir}\nLead: ${lead.model} (${lead.thinking ?? "default"})\n` +
+      `Curator analyzer: ${profiles.worker.model}`)) return;
     const handoff = await handoffToChildSession(ctx, {
       focus: "Lead: decompose PLAN.md into Worker tasks, dispatch, review, report", instruction: LEAD_INSTRUCTION,
       analyzerModel: profiles.worker.model, receiverModel: lead.model, sessionDir: join(dir, "sessions"),
@@ -271,10 +305,12 @@ async function launchLead(pi: ExtensionAPI, ctx: ExtensionContext, dir: string, 
     });
     const seat = await spawnSeat({ runDir: dir, id: "lead", role: "lead", anchor: process.env.HERDR_PANE_ID!,
       direction: "right", cwd: ctx.cwd, parentId: "architect", profile: lead, handoff, brief: leadBrief(dir) });
+    launched = true;
     watchRun(pi, ctx, dir);
     ctx.ui.notify(`Lead started in ${seat.pane} (context ${handoff.mode}: ${handoff.reason}). ` +
       "Keep talking here; its report will arrive as a message.", "info");
   } finally {
+    if (!launched) release();
     ctx.ui.setStatus("shop-seats", undefined);
   }
 }
@@ -287,13 +323,12 @@ export function registerSeats(pi: ExtensionAPI): void {
   const seatId = process.env.SHOP_SEAT_ID;
 
   if (!role) {
-    // One-step /shop-go <goal>: launch the Lead when the SPEC-writing turn ends.
-    let pendingGo: string | undefined;
-    const newRun = async (ctx: ExtensionContext) => {
+    // One-step /shop-go <goal>: the run is recorded with launch=true; the Lead starts when the SPEC turn ends.
+    const newRun = async (ctx: ExtensionContext, launch: boolean) => {
       const dir = join(ctx.cwd, ".shop", "seats", newRunId());
       mkdirSync(dir, { recursive: true, mode: 0o700 });
       await excludeShopDir(ctx.cwd);
-      pi.appendEntry(RUN_ENTRY, { dir });
+      pi.appendEntry(RUN_ENTRY, { dir, launch });
       return dir;
     };
     pi.on("session_start", async (_event, ctx) => {
@@ -302,28 +337,34 @@ export function registerSeats(pi: ExtensionAPI): void {
     });
     pi.on("session_shutdown", async () => stopWatchers());
     pi.on("agent_end", async (_event, ctx) => {
-      const dir = pendingGo;
-      if (!dir) return;
-      pendingGo = undefined;
-      if (!hasSpec(dir)) { ctx.ui.notify(`SPEC.md/PLAN.md were not written in ${dir}; Lead not started`, "error"); return; }
-      try { await launchLead(pi, ctx, dir, false); } catch (error) { ctx.ui.notify("Lead launch failed: " + String(error), "error"); }
+      for (const dir of pendingLaunches(ctx)) {
+        if (!hasSpec(dir)) {
+          if (claimLaunch(dir)) ctx.ui.notify(`SPEC.md/PLAN.md were not written in ${dir}; Lead not started`, "error");
+          continue;
+        }
+        try { await launchLead(pi, ctx, dir, false); } catch (error) { ctx.ui.notify("Lead launch failed: " + String(error), "error"); }
+      }
     });
 
     pi.registerCommand("shop-spec", { description: "Write SPEC.md + PLAN.md for a goal (ephemeral seats)", handler: async (args, ctx) => {
       if (!args.trim()) { ctx.ui.notify("Usage: /shop-spec <goal>", "info"); return; }
       if (!ctx.isIdle()) { ctx.ui.notify("Current turn unfinished; nothing started", "warning"); return; }
-      pi.sendUserMessage(specPrompt(await newRun(ctx), args.trim(), false));
+      pi.sendUserMessage(specPrompt(await newRun(ctx, false), args.trim(), false));
     } });
 
     pi.registerCommand("shop-go", {
       description: "Start the Lead: /shop-go <goal> writes SPEC/PLAN then launches; /shop-go [run-dir] launches a reviewed run",
       handler: async (args, ctx) => {
-        if (!ctx.isIdle() || pendingGo) { ctx.ui.notify("Current turn unfinished; nothing started", "warning"); return; }
+        if (!ctx.isIdle()) { ctx.ui.notify("Current turn unfinished; nothing started", "warning"); return; }
+        const pending = pendingLaunches(ctx);
+        if (pending.length) {
+          ctx.ui.notify(`A /shop-go is already preparing ${pending.at(-1)}; wait for its Lead, or start it with /shop-go <run-dir>`, "warning");
+          return;
+        }
         const arg = args.trim();
         const path = arg && resolve(ctx.cwd, arg);
         if (arg && !(existsSync(path) && statSync(path).isDirectory())) {
-          pendingGo = await newRun(ctx);
-          pi.sendUserMessage(specPrompt(pendingGo, arg, true));
+          pi.sendUserMessage(specPrompt(await newRun(ctx, true), arg, true));
           return;
         }
         const dir = path || latestRun(ctx);

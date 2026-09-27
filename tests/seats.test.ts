@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { writeFileSync as write, mkdirSync as mkdir, existsSync } from "node:fs";
-import { deliverLeadReport, excludeShopDir, seatAgentName } from "../extensions/seats.ts";
+import { claimLaunch, deliverLeadReport, excludeShopDir, pendingLaunches, seatAgentName, startWhenShellReady } from "../extensions/seats.ts";
 
 test("run records are excluded from git status once, via the repo-local exclude file", async () => {
   const repo = mkdtempSync(join(tmpdir(), "seats-exclude-"));
@@ -49,4 +49,26 @@ test("the Lead report is delivered in-process exactly once, queued when busy, an
   expect(sent[0].text).toContain("three results");
   expect(sent[0].text).toContain("First answer the user's original request");
   expect(sent[0].options).toEqual({ deliverAs: "followUp" });
+});
+
+test("agent start waits for a slow shell, but other errors and the deadline still fail", async () => {
+  let calls = 0;
+  const busyTwice = async () => { calls++; if (calls <= 2) throw new Error("agent_pane_busy: pane is not an available shell"); };
+  await startWhenShellReady(["a"], busyTwice, 5_000, 1);
+  expect(calls).toBe(3);
+  await expect(startWhenShellReady(["a"], async () => { throw new Error("invalid_agent_name"); }, 5_000, 1)).rejects.toThrow("invalid_agent_name");
+  await expect(startWhenShellReady(["a"], async () => { throw new Error("agent_pane_busy"); }, 20, 5)).rejects.toThrow("agent_pane_busy");
+});
+
+test("one-step runs stay pending until their Lead launch is claimed, exactly once", () => {
+  const root = mkdtempSync(join(tmpdir(), "seats-launch-"));
+  const run = (name: string) => { const dir = join(root, name); mkdir(dir); return dir; };
+  const reviewed = run("reviewed"), oneStep = run("one-step"), launched = run("launched");
+  mkdir(join(launched, "seats")); write(join(launched, "seats/lead.json"), JSON.stringify({ id: "lead", role: "lead" }));
+  const entry = (dir: string, launch: boolean) => ({ type: "custom", customType: "shop-seat-run", data: { dir, launch } });
+  const ctx = { sessionManager: { getEntries: () => [entry(reviewed, false), entry(oneStep, true), entry(launched, true)] } } as any;
+  expect(pendingLaunches(ctx)).toEqual([oneStep]);
+  expect(claimLaunch(oneStep)).toBe(true);
+  expect(claimLaunch(oneStep)).toBe(false);
+  expect(pendingLaunches(ctx)).toEqual([]);
 });

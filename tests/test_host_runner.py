@@ -402,6 +402,8 @@ class LiveProviderTests(unittest.TestCase):
     def test_fixture_match_tolerates_markdown_wrapping_but_not_other_text(self):
         self.assertTrue(host_runner.mentions_fixture('says: "Host smoke fixture; no\n  business repository."'))
         self.assertFalse(host_runner.mentions_fixture('Host smoke fixture; business repository.'))
+        self.assertTrue(host_runner.mentions_fixture('It says it is a host smoke fixture and that there is no business repository.'))
+        self.assertFalse(host_runner.mentions_fixture('It is a smoke test file for the host.'))
         self.assertFalse(host_runner.mentions_fixture(None))
 
     def test_session_read_detection_uses_tool_results_not_mentions(self):

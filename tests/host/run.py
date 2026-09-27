@@ -41,10 +41,13 @@ SEATS_TASK = ('Delegation test. A Worker must read fixture.txt in this repositor
               'Do not modify files.')
 # Deliberately forces the Worker path: a trivial task lets Lead do it alone.
 
+FIXTURE_FACTS = ('host smoke fixture', 'no business repository')
+
+
 def mentions_fixture(text):
-    """Models wrap Markdown lines; compare with whitespace and case normalized."""
-    normalize = lambda value: ' '.join(value.split()).lower()
-    return normalize(FIXTURE_TEXT) in normalize(text or '')
+    """The fixture's content is reported, verbatim or paraphrased: both key facts, whitespace/case-insensitive."""
+    normalized = ' '.join((text or '').split()).lower()
+    return all(fact in normalized for fact in FIXTURE_FACTS)
 
 
 # Real task: a small module with a genuine bug, a failing test, and a feature to add.
@@ -385,6 +388,8 @@ class HostTest:
         for name in ('home', 'herdr', 'pi', 'sessions', 'tmp', 'bin', 'config', 'state', 'project', 'observations'):
             (self.root / name).mkdir(mode=0o700)
         (self.root / 'empty-gitconfig').touch()
+        # Real shells (zsh with plugins) take time to start; new seat panes must cope with that.
+        (self.root / 'home/.bashrc').write_text('sleep 2\n')
         (self.root / 'herdr/config.toml').write_text('''onboarding = false
 [update]
 version_check = false
@@ -510,7 +515,14 @@ resume_agents_on_restore = false
                           shlex.join([self.binaries['pig'], '--pi-bin', self.binaries['pi'], '--offline', '--', *self.pi_args])
                           + ' 2>' + shlex.quote(str(self.root / 'pig.err'))])
         else:
-            self.api('agent', 'start', 'host-architect', '--kind', 'pi', '--pane', self.pane, '--timeout', '30000')
+            def started():
+                try:
+                    return self.api('agent', 'start', 'host-architect', '--kind', 'pi', '--pane', self.pane, '--timeout', '30000')
+                except RuntimeError as error:
+                    if 'agent_pane_busy' in str(error):
+                        return None
+                    raise
+            self.wait(started, 'Architect shell never became available', timeout=60)
         self.wait(lambda: (self.root / 'observations' / (self.pane + '.json')).exists(), 'Real Pi extension did not start')
         observed = json.loads((self.root / 'observations' / (self.pane + '.json')).read_text())
         if observed['mode'] != 'tui' or not observed['hasUI'] or not REQUIRED_COMMANDS <= set(observed['commands']):
